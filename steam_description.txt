@@ -1,0 +1,52 @@
+Names your newborn beavers after your Patreon supporters — in order, every time.
+
+Connect to the Patreon API with your Creator Access Token and the mod fetches your active supporters automatically. Each beaver born gets the next name on the list. When the list runs out, it loops. The position is saved with your game so no name is ever skipped between sessions.
+
+No Patreon account? Drop names into the included [code]patreons.csv[/code] file instead — one name per line, works fully offline.
+
+[hr][/hr]
+
+[h1]What it does[/h1]
+[list]
+    [*]Assigns the next supporter name to every newborn beaver, in sequence
+    [*]Saves the current position in your save file — survives reloads and restarts
+    [*]Fetches live from Patreon API v2 using your Creator Access Token
+    [*]Auto-discovers your Campaign ID — just paste your token and you're done
+    [*]Filters by tier: toggle Bronze, Silver, Gold, and custom tiers independently
+    [*]Handles large campaigns with full pagination and rate limit backoff
+    [*]Falls back to a local CSV file if no token is configured
+[/list]
+
+[hr][/hr]
+
+[h1]Optional: Mod Settings[/h1]
+Works without it — configure via [code]patreons.csv[/code]. With [url=https://mod.io/g/timberborn/m/modsettings]Mod Settings[/url] installed you get a full in-game panel:
+[list]
+    [*]Paste your Creator Access Token directly in-game
+    [*]Set or auto-detect your Campaign ID
+    [*]Toggle tiers (Bronze / Silver / Gold / Custom) with checkboxes
+    [*]Live preview of the loaded name list, updated after each API fetch
+[/list]
+
+[hr][/hr]
+
+[h1]Changelog[/h1]
+
+[h2]1.0.0[/h2]
+[list]
+    [*][b]Patreon REST API v2[/b] — live supporter sync with Bearer token authentication
+    [*][b]Pagination[/b] — full traversal of all API pages for large campaigns
+    [*][b]Rate limiting[/b] — automatic HTTP 429 backoff with Retry-After support
+    [*][b]Tier discovery[/b] — auto-detects Bronze, Silver, Gold, and all custom tiers
+    [*][b]Campaign auto-discovery[/b] — resolves Campaign ID from your Access Token
+    [*][b]Save persistence[/b] — name index stored in the save file
+    [*][b]CSV fallback[/b] — offline mode via patreons.csv
+    [*][b]Mod Settings integration[/b] — in-game UI with live preview (optional)
+    [*][b]Crash reporting[/b] — session logging with reentrancy protection
+[/list]
+
+[hr][/hr]
+
+[h1]Source & Support[/h1]
+Open source on GitHub: [url=https://github.com/Victor7996/Patreon-Beaver-Names]Victor7996/Patreon-Beaver-Names[/url]
+Support the mod: [url=https://ko-fi.com/Victor7996]ko-fi.com/Victor7996[/url]
