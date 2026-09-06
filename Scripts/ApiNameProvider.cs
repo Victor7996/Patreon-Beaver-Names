@@ -329,8 +329,14 @@ namespace Mods.PatreonBeaverNames.Scripts {
         HttpResponseMessage response = await HttpClient.SendAsync(request).ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode) {
-          ModLogger.LogWarning(
-              $"Patreon API request to {queryUrl} failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase}). Using fallback name.");
+          if (response.StatusCode == HttpStatusCode.NotFound) {
+            ModLogger.LogWarning(
+                $"Patreon API request to {queryUrl} failed with HTTP 404 (Not Found). " +
+                $"Please verify that Campaign ID '{campaignId}' is correct (Patreon Campaign IDs are siffer-ID:n like '1234567', not tokens). Using fallback name.");
+          } else {
+            ModLogger.LogWarning(
+                $"Patreon API request to {queryUrl} failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase}). Using fallback name.");
+          }
           MarkLoadedWithFallback();
           return;
         }
