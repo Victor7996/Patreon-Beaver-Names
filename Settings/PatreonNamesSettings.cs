@@ -91,8 +91,8 @@ namespace Mods.PatreonBeaverNames.Settings {
       SetupGuideSetting = new LongStringModSetting(
           "SETUP INSTRUCTIONS:" + Environment.NewLine +
           "1. Creator's Access Token: Go to patreon.com/portal -> My Clients -> Create Client, then copy your 'Creator's Access Token'." + Environment.NewLine +
-          "2. Campaign ID: Go to your Patreon page, right-click -> View Page Source, and search for 'campaign_id'." + Environment.NewLine +
-          "3. Enter both values below. Your Patreon supporters will load automatically into beaver names!",
+          "2. Campaign ID (Optional): Leave as 'default' for auto-detection! If you own multiple campaigns, enter your desired Campaign ID." + Environment.NewLine +
+          "3. Enter your token below. Your Patreon supporters will load automatically into beaver names!",
           ModSettingDescriptor.Create("Setup Guide")
               .SetTooltip("Step-by-step guide for setting up the Patreon Beaver Names mod.")
       );
@@ -100,7 +100,7 @@ namespace Mods.PatreonBeaverNames.Settings {
       CampaignIdSetting = new ModSetting<string>(
           "default",
           ModSettingDescriptor.Create("Patreon Campaign ID")
-              .SetTooltip("Go to your Patreon page, right-click -> View Page Source, and search for 'campaign_id'.")
+              .SetTooltip("Leave as 'default' to auto-detect your campaign, or specify a Campaign ID if you have multiple campaigns.")
       );
 
       AccessTokenSetting = new ModSetting<string>(
