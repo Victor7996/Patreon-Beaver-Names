@@ -8,13 +8,9 @@
     <Nullable>disable</Nullable>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <TimberbornManagedDir>D:\SteamLibrary\steamapps\common\Timberborn\Timberborn_Data\Managed</TimberbornManagedDir>
+    <!-- Completely exclude the Settings subproject from this project's item globbing -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);Settings\**</DefaultItemExcludes>
   </PropertyGroup>
-
-  <!-- Exclude the Settings subproject sources and obj from main mod compilation -->
-  <ItemGroup>
-    <Compile Remove="Settings\**" />
-    <None Remove="Settings\**" />
-  </ItemGroup>
 
   <ItemGroup>
     <Reference Include="UnityEngine.CoreModule">
