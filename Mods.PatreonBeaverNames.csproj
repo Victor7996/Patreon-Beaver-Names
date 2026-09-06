@@ -73,6 +73,10 @@
       <HintPath>$(TimberbornManagedDir)\Timberborn.Common.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="System.Text.Json">
+      <HintPath>$(TimberbornManagedDir)\System.Text.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- Build Settings integration assembly into outside build dir before packaging -->

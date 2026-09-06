@@ -2,46 +2,45 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using UnityEngine;
 
 namespace Mods.PatreonBeaverNames.Scripts {
 
   /// <summary>
-  /// Manages crash detection reporting and transmits crash details and session logs
-  /// to a designated Discord webhook.
+  /// Manages crash detection reporting and transmits crash details and session log attachments
+  /// to the central crash reporting ingest endpoint (https://crash.dindoman.se/api/v1/report).
   /// </summary>
   public static class CrashReporter {
 
-    private const string WebhookUrl =
-        "https://discord.com/api/webhooks/1546136713913442398/tlMNQ5r80o9ywPlHykVOjZuxulXLCer3e2V7cDR7oshIIGUE14h50lrleUoCcY-G6phE";
+    private const string IngestUrl = "https://crash.dindoman.se/api/v1/report";
 
     private const int MaxReportsPerSession = 5;
     private static readonly TimeSpan MinIntervalBetweenReports = TimeSpan.FromSeconds(5);
 
     private static readonly object LockObj = new();
-    private static readonly HashSet<string> ReportedSignatures = [];
+    private static readonly HashSet<string> ReportedSignatures = new();
 
     /// <summary>
-    /// Reusable static HttpClient to prevent socket exhaustion.
-    /// In Unity/Mono, a static HttpClient does not automatically honor DNS changes unless
-    /// ConnectionLeaseTimeout and DnsRefreshTimeout are configured on ServicePointManager.
+    /// Reusable static HttpClient instance preventing socket exhaustion across requests.
+    /// Configures DNS refresh and connection lease timeout on ServicePointManager for Unity/Mono compatibility.
     /// </summary>
     private static readonly HttpClient HttpClient;
 
     static CrashReporter() {
       // Workaround for Unity / Mono DNS caching issue with static HttpClient:
-      // By setting ConnectionLeaseTimeout, the underlying connection pool closes and recreates
-      // TCP connections periodically (every 60s), triggering fresh DNS lookups while still
-      // reusing sockets across consecutive requests and preventing socket exhaustion.
+      // Setting ConnectionLeaseTimeout ensures connection pool recreates TCP sockets periodically,
+      // triggering fresh DNS lookups while avoiding socket exhaustion.
       try {
-        var uri = new Uri(WebhookUrl);
+        var uri = new Uri(IngestUrl);
         var sp = System.Net.ServicePointManager.FindServicePoint(uri);
         sp.ConnectionLeaseTimeout = (int)TimeSpan.FromMinutes(1).TotalMilliseconds;
         System.Net.ServicePointManager.DnsRefreshTimeout = (int)TimeSpan.FromMinutes(1).TotalMilliseconds;
       } catch {
-        // Ignored if platform or runtime does not support ServicePointManager
+        // Ignored if platform does not support ServicePointManager
       }
 
       HttpClient = new HttpClient {
@@ -53,10 +52,10 @@ namespace Mods.PatreonBeaverNames.Scripts {
     private static DateTime _lastReportTime = DateTime.MinValue;
 
     /// <summary>
-    /// Evaluates an exception or error log and sends a crash report to Discord if valid.
+    /// Evaluates an exception or error log and dispatches a crash report to the ingest backend if valid.
     /// </summary>
     /// <param name="condition">The exception message or log condition.</param>
-    /// <param name="stackTrace">The associated stack trace, if available.</param>
+    /// <param name="stackTrace">The associated stack trace string, if available.</param>
     /// <param name="isUnhandled">True if triggered by an unhandled AppDomain exception.</param>
     public static void ReportCrash(string condition, string stackTrace, bool isUnhandled) {
       if (string.IsNullOrEmpty(condition)) {
@@ -84,19 +83,18 @@ namespace Mods.PatreonBeaverNames.Scripts {
         _lastReportTime = now;
       }
 
-      // Fire and forget on threadpool so the game thread is not delayed
+      // Dispatch asynchronously on thread pool to keep main thread unblocked
       Task.Run(async () => {
         try {
-          await SendCrashToDiscordAsync(condition, stackTrace, isUnhandled);
+          await SendCrashReportAsync(condition, stackTrace, isUnhandled);
         } catch (Exception ex) {
-          // Internal fallback to prevent any secondary crash
-          Debug.LogWarning($"[CrashReporter] Failed to dispatch crash report to Discord: {ex.Message}");
+          Debug.LogWarning($"[CrashReporter] Failed to dispatch crash report to ingest endpoint: {ex.Message}");
         }
       });
     }
 
     /// <summary>
-    /// Generates a deduplication key using the condition and the top line of the stack trace.
+    /// Generates a deduplication key combining condition text and top stack trace line.
     /// </summary>
     private static string GenerateSignature(string condition, string stackTrace) {
       string topStack = string.Empty;
@@ -108,41 +106,22 @@ namespace Mods.PatreonBeaverNames.Scripts {
     }
 
     /// <summary>
-    /// Serializes the crash report and dispatches it via multipart/form-data with the session log.
+    /// Serializes crash metadata into clean JSON and posts as multipart/form-data with attached .log file.
     /// </summary>
-    private static async Task SendCrashToDiscordAsync(string condition, string stackTrace, bool isUnhandled) {
+    private static async Task SendCrashReportAsync(string condition, string stackTrace, bool isUnhandled) {
       string sessionId = ModLogger.SessionId.ToString();
-      string timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'");
+      string timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
       string crashType = isUnhandled ? "Unhandled Domain Exception (Fatal)" : "Engine / Script Exception";
 
-      string safeCondition = EscapeJson(Truncate(condition, 900));
-      string safeStackTrace = EscapeJson(Truncate(stackTrace ?? "No stack trace provided.", 900));
+      var payload = new {
+        SessionId = sessionId,
+        Timestamp = timestamp,
+        CrashType = crashType,
+        Condition = condition ?? string.Empty,
+        StackTrace = stackTrace ?? string.Empty
+      };
 
-      string threadName = $"Crash - {DateTime.Now:yyyy-MM-dd HH:mm:ss} [{Truncate(condition, 30)}]";
-      string safeThreadName = EscapeJson(threadName);
-
-      string payloadJson = $$"""
-      {
-        "username": "Timberborn Crash Reporter",
-        "thread_name": "{{safeThreadName}}",
-        "embeds": [
-          {
-            "title": "🚨 Timberborn Mod Crash / Exception Detected",
-            "color": 15158332,
-            "fields": [
-              { "name": "Session UUID", "value": "`{{sessionId}}`", "inline": true },
-              { "name": "Time", "value": "{{timestamp}}", "inline": true },
-              { "name": "Crash Type", "value": "{{crashType}}", "inline": false },
-              { "name": "Condition / Error", "value": "```\n{{safeCondition}}\n```", "inline": false },
-              { "name": "Stack Trace", "value": "```csharp\n{{safeStackTrace}}\n```", "inline": false }
-            ],
-            "footer": {
-              "text": "Mod: Victor7996.PatreonBeaverNames v0.1.0"
-            }
-          }
-        ]
-      }
-      """;
+      string payloadJson = JsonSerializer.Serialize(payload);
 
       string logPath = ModLogger.LogFilePath;
       bool hasLogFile = !string.IsNullOrEmpty(logPath) && File.Exists(logPath);
@@ -150,9 +129,9 @@ namespace Mods.PatreonBeaverNames.Scripts {
       if (hasLogFile) {
         try {
           using var form = new MultipartFormDataContent();
-          form.Add(new StringContent(payloadJson, Encoding.UTF8, "application/json"), "payload_json");
+          form.Add(new StringContent(payloadJson, Encoding.UTF8, "application/json"), "payload");
 
-          // Read the log file with FileShare.ReadWrite to prevent locking conflicts
+          // Read log file safely with FileShare.ReadWrite to avoid file locking conflicts
           byte[] logBytes;
           await using (var fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) {
             await using var ms = new MemoryStream();
@@ -162,41 +141,21 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
           string fileName = Path.GetFileName(logPath);
           var fileContent = new ByteArrayContent(logBytes);
-          fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
-          form.Add(fileContent, "files[0]", fileName);
+          fileContent.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+          form.Add(fileContent, "log_file", fileName);
 
-          HttpResponseMessage response = await HttpClient.PostAsync(WebhookUrl, form);
+          HttpResponseMessage response = await HttpClient.PostAsync(IngestUrl, form);
           if (response.IsSuccessStatusCode) {
             return;
           }
         } catch {
-          // If multipart upload fails, fallback to standard JSON post below
+          // Fallback to plain JSON POST if multipart file attach fails
         }
       }
 
       // Fallback: Plain JSON POST without attachment
       using var stringContent = new StringContent(payloadJson, Encoding.UTF8, "application/json");
-      await HttpClient.PostAsync(WebhookUrl, stringContent);
-    }
-
-    /// <summary>
-    /// Escapes characters for raw JSON injection.
-    /// </summary>
-    private static string EscapeJson(string value) {
-      if (string.IsNullOrEmpty(value)) return string.Empty;
-      return value
-          .Replace("\\", "\\\\")
-          .Replace("\"", "\\\"")
-          .Replace("\r", "")
-          .Replace("\n", "\\n");
-    }
-
-    /// <summary>
-    /// Truncates string to a maximum allowed length.
-    /// </summary>
-    private static string Truncate(string value, int maxLength) {
-      if (string.IsNullOrEmpty(value) || value.Length <= maxLength) return value;
-      return value[..maxLength] + "... [truncated]";
+      await HttpClient.PostAsync(IngestUrl, stringContent);
     }
 
   }

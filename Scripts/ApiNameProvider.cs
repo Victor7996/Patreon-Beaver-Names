@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Timberborn.SingletonSystem;
 using UnityEngine;
@@ -19,7 +20,8 @@ namespace Mods.PatreonBeaverNames.Scripts {
   /// <see cref="ILoadableSingleton"/> to initialize upon world/save load.
   /// Supports OpenAPI v2 endpoints (<c>/api/oauth2/v2/campaigns/{campaign_id}/members</c>),
   /// JSON:API compound documents with included tiers, Bearer token authentication,
-  /// and tier filtering (Bronze, Silver, Gold, or custom tier titles).
+  /// automatic campaign discovery, and dynamic tier filtering.
+  /// Uses <see cref="System.Text.Json"/> for robust JSON parsing.
   /// </remarks>
   public class ApiNameProvider : INameProvider, ILoadableSingleton {
 
@@ -35,7 +37,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
     public const string FallbackName = "[Patreon Pending]";
 
     /// <summary>
-    /// Reusable static HttpClient to avoid socket exhaustion across requests.
+    /// Reusable static HttpClient instance preventing socket exhaustion across requests.
     /// Connection lease timeout is managed via <see cref="ServicePointManager"/> to prevent DNS caching issues.
     /// </summary>
     private static readonly HttpClient HttpClient;
@@ -469,7 +471,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
     public static List<DiscoveredCampaign> DiscoveredCampaigns { get; private set; } = new List<DiscoveredCampaign>();
 
     /// <summary>
-    /// Fetches all campaigns owned by the user via /api/oauth2/v2/campaigns?fields[campaign]=name,creation_name,url,vanity.
+    /// Fetches all campaigns owned by the user via /api/oauth2/v2/campaigns using System.Text.Json.
     /// </summary>
     public static async Task<List<DiscoveredCampaign>> DiscoverCampaignsAsync(string token) {
       var campaigns = new List<DiscoveredCampaign>();
@@ -488,45 +490,28 @@ namespace Mods.PatreonBeaverNames.Scripts {
         string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(json)) return campaigns;
 
-        try {
-          var resp = JsonUtility.FromJson<PatreonCampaignsResponse>(json);
-          if (resp?.data != null) {
-            foreach (var item in resp.data) {
-              if (item != null && !string.IsNullOrEmpty(item.id)) {
-                string name = item.attributes?.name?.Trim();
-                if (string.IsNullOrEmpty(name)) name = item.attributes?.creation_name?.Trim();
-                if (string.IsNullOrEmpty(name)) name = "Campaign " + item.id;
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.TryGetProperty("data", out var dataEl) && dataEl.ValueKind == JsonValueKind.Array) {
+          foreach (var item in dataEl.EnumerateArray()) {
+            if (item.TryGetProperty("id", out var idEl)) {
+              string id = idEl.GetString();
+              if (string.IsNullOrEmpty(id)) continue;
 
-                string campaignUrl = item.attributes?.url?.Trim();
-                if (string.IsNullOrEmpty(campaignUrl)) {
-                  campaignUrl = !string.IsNullOrEmpty(item.attributes?.vanity)
-                      ? $"https://www.patreon.com/{item.attributes.vanity}"
-                      : $"https://www.patreon.com/campaigns/{item.id}";
+              string name = null;
+              string campaignUrl = null;
+
+              if (item.TryGetProperty("attributes", out var attrEl)) {
+                if (attrEl.TryGetProperty("name", out var nEl)) name = nEl.GetString()?.Trim();
+                if (string.IsNullOrEmpty(name) && attrEl.TryGetProperty("creation_name", out var cnEl)) name = cnEl.GetString()?.Trim();
+                if (attrEl.TryGetProperty("url", out var uEl)) campaignUrl = uEl.GetString()?.Trim();
+                if (string.IsNullOrEmpty(campaignUrl) && attrEl.TryGetProperty("vanity", out var vEl) && !string.IsNullOrEmpty(vEl.GetString())) {
+                  campaignUrl = $"https://www.patreon.com/{vEl.GetString()}";
                 }
-
-                campaigns.Add(new DiscoveredCampaign {
-                  Id = item.id,
-                  Name = name,
-                  Url = campaignUrl
-                });
               }
-            }
-          }
-        } catch {
-          // Fallback to regex if JsonUtility fails
-        }
 
-        if (campaigns.Count == 0) {
-          var idMatches = System.Text.RegularExpressions.Regex.Matches(json, @"""id""\s*:\s*""(\d+)""");
-          var nameMatches = System.Text.RegularExpressions.Regex.Matches(json, @"""name""\s*:\s*""([^""]+)""");
-          var urlMatches = System.Text.RegularExpressions.Regex.Matches(json, @"""url""\s*:\s*""([^""]+)""");
+              if (string.IsNullOrEmpty(name)) name = "Campaign " + id;
+              if (string.IsNullOrEmpty(campaignUrl)) campaignUrl = $"https://www.patreon.com/campaigns/{id}";
 
-          for (int i = 0; i < idMatches.Count; i++) {
-            string id = idMatches[i].Groups[1].Value;
-            string name = i < nameMatches.Count ? nameMatches[i].Groups[1].Value : "Campaign " + id;
-            string campaignUrl = i < urlMatches.Count ? urlMatches[i].Groups[1].Value : $"https://www.patreon.com/campaigns/{id}";
-
-            if (!campaigns.Any(c => c.Id == id)) {
               campaigns.Add(new DiscoveredCampaign {
                 Id = id,
                 Name = name,
@@ -536,7 +521,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
           }
         }
       } catch (Exception ex) {
-        ModLogger.LogWarning($"Failed to discover campaigns: {ex.Message}");
+        ModLogger.LogWarning($"Failed to discover campaigns via System.Text.Json: {ex.Message}");
       }
 
       return campaigns;
@@ -572,7 +557,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
     }
 
     /// <summary>
-    /// Parses a Patreon API v2 JSON:API response conforming to openapi.json.
+    /// Parses a Patreon API v2 JSON:API response conforming to openapi.json using System.Text.Json.
     /// Dynamically discovers all tiers from the campaign (both standard and custom),
     /// and filters members based on active tier settings.
     /// </summary>
@@ -599,81 +584,86 @@ namespace Mods.PatreonBeaverNames.Scripts {
             customTiers.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
                        .Select(t => t.Trim().ToLowerInvariant()));
       }
+
       try {
-        PatreonApiResponse response = JsonUtility.FromJson<PatreonApiResponse>(json);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
 
-        if (response?.data != null && response.data.Length > 0) {
-          // Build lookup map of tier ID -> tier title and amount from the "included" array (Patreon API v2 compound document)
-          var tierIdToTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var tierIdToAmount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-          var allDiscoveredTiers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var tierIdToTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var tierIdToAmount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var allDiscoveredTiers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-          if (response.included != null) {
-            foreach (PatreonIncluded inc in response.included) {
-              if (inc != null && string.Equals(inc.type, "tier", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(inc.id)) {
-                if (inc.attributes != null) {
-                  string title = inc.attributes.title?.Trim();
-                  if (!string.IsNullOrEmpty(title)) {
-                    tierIdToTitle[inc.id] = title;
-                    tierIdToAmount[inc.id] = inc.attributes.amount_cents;
-                    allDiscoveredTiers[title] = inc.attributes.amount_cents;
-                  }
+        // Parse 'included' array for campaign tier definitions
+        if (root.TryGetProperty("included", out var includedElement) && includedElement.ValueKind == JsonValueKind.Array) {
+          foreach (var item in includedElement.EnumerateArray()) {
+            if (item.TryGetProperty("type", out var typeEl) &&
+                string.Equals(typeEl.GetString(), "tier", StringComparison.OrdinalIgnoreCase) &&
+                item.TryGetProperty("id", out var idEl)) {
+
+              string tierId = idEl.GetString();
+              if (item.TryGetProperty("attributes", out var attrEl)) {
+                string title = attrEl.TryGetProperty("title", out var titleEl) ? titleEl.GetString()?.Trim() : null;
+                int amount = attrEl.TryGetProperty("amount_cents", out var amtEl) && amtEl.TryGetInt32(out int cents) ? cents : 0;
+
+                if (!string.IsNullOrEmpty(tierId) && !string.IsNullOrEmpty(title)) {
+                  tierIdToTitle[tierId] = title;
+                  tierIdToAmount[tierId] = amount;
+                  allDiscoveredTiers[title] = amount;
                 }
               }
             }
           }
+        }
 
-          foreach (PatreonMember member in response.data) {
-            if (member == null) continue;
+        // Parse 'data' array for campaign member records
+        if (root.TryGetProperty("data", out var dataElement) && dataElement.ValueKind == JsonValueKind.Array) {
+          foreach (var member in dataElement.EnumerateArray()) {
+            if (!member.TryGetProperty("attributes", out var attrEl)) continue;
 
-            string fullName = member.attributes?.full_name?.Trim();
-            if (string.IsNullOrEmpty(fullName)) {
-              continue;
-            }
+            string fullName = attrEl.TryGetProperty("full_name", out var fnEl) ? fnEl.GetString()?.Trim() : null;
+            if (string.IsNullOrEmpty(fullName)) continue;
 
-            // Per openapi.json member schema, patron_status can be: "active_patron", "declined_patron", "former_patron"
-            string patronStatus = member.attributes?.patron_status;
+            string patronStatus = attrEl.TryGetProperty("patron_status", out var psEl) ? psEl.GetString() : null;
             if (!string.IsNullOrEmpty(patronStatus) &&
                 !string.Equals(patronStatus, "active_patron", StringComparison.OrdinalIgnoreCase)) {
-              // Ignore non-active patrons (declined or former)
               continue;
             }
 
-            // Resolve member's tier title and contribution amount
             string resolvedTier = string.Empty;
-            int memberAmount = member.attributes?.currently_entitled_amount_cents ?? 0;
+            int memberAmount = attrEl.TryGetProperty("currently_entitled_amount_cents", out var amtEl) && amtEl.TryGetInt32(out int cents) ? cents : 0;
 
-            // 1. Direct tier_title in attributes (convenience or mock field)
-            if (!string.IsNullOrEmpty(member.attributes?.tier_title)) {
-              resolvedTier = member.attributes.tier_title.Trim();
-            }
-            // 2. Correlate through relationships.currently_entitled_tiers -> included tier
-            else if (member.relationships?.currently_entitled_tiers?.data != null) {
-              foreach (PatreonResourceIdentifier tierRef in member.relationships.currently_entitled_tiers.data) {
-                if (tierRef != null && !string.IsNullOrEmpty(tierRef.id) && tierIdToTitle.TryGetValue(tierRef.id, out string title)) {
-                  resolvedTier = title;
-                  if (tierIdToAmount.TryGetValue(tierRef.id, out int amt) && amt > 0) {
-                    memberAmount = amt;
+            if (attrEl.TryGetProperty("tier_title", out var ttEl) && !string.IsNullOrEmpty(ttEl.GetString())) {
+              resolvedTier = ttEl.GetString().Trim();
+            } else if (member.TryGetProperty("relationships", out var relEl) &&
+                       relEl.TryGetProperty("currently_entitled_tiers", out var cetEl) &&
+                       cetEl.TryGetProperty("data", out var cetDataEl) &&
+                       cetDataEl.ValueKind == JsonValueKind.Array) {
+              foreach (var tierRef in cetDataEl.EnumerateArray()) {
+                if (tierRef.TryGetProperty("id", out var trIdEl)) {
+                  string trId = trIdEl.GetString();
+                  if (!string.IsNullOrEmpty(trId) && tierIdToTitle.TryGetValue(trId, out string title)) {
+                    resolvedTier = title;
+                    if (tierIdToAmount.TryGetValue(trId, out int a) && a > 0) {
+                      memberAmount = a;
+                    }
+                    break;
                   }
-                  break;
                 }
               }
             }
-            // 3. Fallback: match by currently_entitled_amount_cents
+
             if (string.IsNullOrEmpty(resolvedTier) && memberAmount > 0) {
               if (memberAmount >= 2500) resolvedTier = "Gold";
               else if (memberAmount >= 1000) resolvedTier = "Silver";
               else if (memberAmount >= 500) resolvedTier = "Bronze";
             }
 
-            // Record discovered tier
             if (!string.IsNullOrEmpty(resolvedTier) && !allDiscoveredTiers.ContainsKey(resolvedTier)) {
               allDiscoveredTiers[resolvedTier] = memberAmount;
             }
 
-            // Filter by tier dynamically
+            // Apply active tier filter criteria
             if (customTierSet != null && customTierSet.Count > 0) {
-              // Explicit custom tier filter specified -> check match
               if (string.IsNullOrEmpty(resolvedTier) || !customTierSet.Contains(resolvedTier.ToLowerInvariant())) {
                 continue;
               }
@@ -685,7 +675,6 @@ namespace Mods.PatreonBeaverNames.Scripts {
               } else if (string.Equals(resolvedTier, "Gold", StringComparison.OrdinalIgnoreCase)) {
                 if (!includeGold) continue;
               } else {
-                // ANY dynamic custom tier (e.g. Diamond, Master Architect, VIP Beaver, etc.)
                 if (!includeCustomTiers) continue;
               }
             } else {
@@ -694,120 +683,11 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
             result.Add(fullName);
           }
-
-          // Format discovered tiers summary sorted by contribution amount ascending
-          if (allDiscoveredTiers.Count > 0) {
-            var formattedTiers = allDiscoveredTiers
-                .OrderBy(kvp => kvp.Value)
-                .ThenBy(kvp => kvp.Key)
-                .Select(kvp => kvp.Value > 0 ? $"{kvp.Key} (${kvp.Value / 100})" : kvp.Key)
-                .ToList();
-
-            string summary = string.Join(", ", formattedTiers);
-            DiscoveredTiersSummary = summary;
-            TiersDiscovered?.Invoke(summary);
-          }
-        } else {
-          // Robust regex fallback parser if JsonUtility returns empty array
-          result = ParsePatreonNamesWithRegexFallback(
-              json,
-              includeBronze,
-              includeSilver,
-              includeGold,
-              includeCustomTiers,
-              customTierSet);
         }
 
-      } catch (Exception ex) {
-        ModLogger.LogError($"JsonUtility failed to parse OpenAPI Patreon response: {ex.Message}. Attempting fallback regex parser...");
-        result = ParsePatreonNamesWithRegexFallback(
-            json,
-            includeBronze,
-            includeSilver,
-            includeGold,
-            includeCustomTiers,
-            customTierSet);
-      }
-
-      return result;
-    }
-
-    /// <summary>
-    /// Robust regex fallback parser when JsonUtility fails or returns empty payload in non-standard environments.
-    /// </summary>
-    private static List<string> ParsePatreonNamesWithRegexFallback(
-        string json,
-        bool includeBronze,
-        bool includeSilver,
-        bool includeGold,
-        bool includeCustomTiers,
-        HashSet<string> customTierSet) {
-
-      var result = new List<string>();
-      var discoveredTiers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
-      try {
-        // Extract full_name and tier_title / amount_cents via regular expressions
-        var memberMatches = System.Text.RegularExpressions.Regex.Matches(
-            json,
-            @"""full_name""\s*:\s*""([^""]+)""");
-
-        var tierTitleMatches = System.Text.RegularExpressions.Regex.Matches(
-            json,
-            @"""tier_title""\s*:\s*""([^""]+)""");
-
-        // Extract title and amount_cents blocks dynamically
-        var tierBlockMatches = System.Text.RegularExpressions.Regex.Matches(
-            json,
-            @"""title""\s*:\s*""([^""]+)""[^}]*?""amount_cents""\s*:\s*(\d+)");
-
-        foreach (System.Text.RegularExpressions.Match match in tierBlockMatches) {
-          string t = match.Groups[1].Value.Trim();
-          if (!string.IsNullOrEmpty(t) && !string.Equals(t, "member", StringComparison.OrdinalIgnoreCase)) {
-            if (int.TryParse(match.Groups[2].Value, out int cents)) {
-              discoveredTiers[t] = cents;
-            }
-          }
-        }
-
-        // Fallback for simple title matches if block matching didn't catch any
-        if (discoveredTiers.Count == 0) {
-          var titleMatches = System.Text.RegularExpressions.Regex.Matches(
-              json,
-              @"""title""\s*:\s*""([^""]+)""");
-
-          foreach (System.Text.RegularExpressions.Match match in titleMatches) {
-            string t = match.Groups[1].Value.Trim();
-            if (!string.IsNullOrEmpty(t) && !string.Equals(t, "member", StringComparison.OrdinalIgnoreCase)) {
-              if (!discoveredTiers.ContainsKey(t)) {
-                discoveredTiers[t] = 0;
-              }
-            }
-          }
-        }
-
-        for (int i = 0; i < memberMatches.Count; i++) {
-          string name = memberMatches[i].Groups[1].Value.Trim();
-          if (string.IsNullOrEmpty(name)) continue;
-
-          string tier = i < tierTitleMatches.Count ? tierTitleMatches[i].Groups[1].Value.Trim() : string.Empty;
-
-          if (customTierSet != null && customTierSet.Count > 0) {
-            if (string.IsNullOrEmpty(tier) || !customTierSet.Contains(tier.ToLowerInvariant())) continue;
-          } else if (!string.IsNullOrEmpty(tier)) {
-            if (string.Equals(tier, "Bronze", StringComparison.OrdinalIgnoreCase) && !includeBronze) continue;
-            if (string.Equals(tier, "Silver", StringComparison.OrdinalIgnoreCase) && !includeSilver) continue;
-            if (string.Equals(tier, "Gold", StringComparison.OrdinalIgnoreCase) && !includeGold) continue;
-            if (!string.Equals(tier, "Bronze", StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(tier, "Silver", StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(tier, "Gold", StringComparison.OrdinalIgnoreCase) && !includeCustomTiers) continue;
-          }
-
-          result.Add(name);
-        }
-
-        if (discoveredTiers.Count > 0) {
-          var formattedTiers = discoveredTiers
+        // Format discovered tiers summary
+        if (allDiscoveredTiers.Count > 0) {
+          var formattedTiers = allDiscoveredTiers
               .OrderBy(kvp => kvp.Value)
               .ThenBy(kvp => kvp.Key)
               .Select(kvp => kvp.Value > 0 ? $"{kvp.Key} (${kvp.Value / 100})" : kvp.Key)
@@ -819,7 +699,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
         }
 
       } catch (Exception ex) {
-        ModLogger.LogError($"Regex fallback parser error: {ex.Message}");
+        ModLogger.LogError($"System.Text.Json parsing failed: {ex.Message}");
       }
 
       return result;
@@ -889,82 +769,6 @@ namespace Mods.PatreonBeaverNames.Scripts {
         }
       }
     }
-
-    // -------------------------------------------------------------------------
-    // OpenAPI 3.1 / Patreon API v2 JSON:API Data Transfer Objects for JsonUtility
-
-#pragma warning disable CS0649
-    [Serializable]
-    public class PatreonApiResponse {
-      public PatreonMember[] data;
-      public PatreonIncluded[] included;
-    }
-
-    [Serializable]
-    public class PatreonMember {
-      public string id;
-      public string type;
-      public PatreonMemberAttributes attributes;
-      public PatreonMemberRelationships relationships;
-    }
-
-    [Serializable]
-    public class PatreonMemberAttributes {
-      public string full_name;
-      public string patron_status;
-      public int currently_entitled_amount_cents;
-      public string tier_title;
-    }
-
-    [Serializable]
-    public class PatreonMemberRelationships {
-      public PatreonTierRelationship currently_entitled_tiers;
-    }
-
-    [Serializable]
-    public class PatreonTierRelationship {
-      public PatreonResourceIdentifier[] data;
-    }
-
-    [Serializable]
-    public class PatreonResourceIdentifier {
-      public string id;
-      public string type;
-    }
-
-    [Serializable]
-    public class PatreonIncluded {
-      public string id;
-      public string type;
-      public PatreonTierAttributes attributes;
-    }
-
-    [Serializable]
-    public class PatreonTierAttributes {
-      public string title;
-      public int amount_cents;
-    }
-
-    [Serializable]
-    public class PatreonCampaignsResponse {
-      public PatreonCampaignData[] data;
-    }
-
-    [Serializable]
-    public class PatreonCampaignData {
-      public string id;
-      public string type;
-      public PatreonCampaignAttributes attributes;
-    }
-
-    [Serializable]
-    public class PatreonCampaignAttributes {
-      public string name;
-      public string creation_name;
-      public string url;
-      public string vanity;
-    }
-#pragma warning restore CS0649
 
   }
 
