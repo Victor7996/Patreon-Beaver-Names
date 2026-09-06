@@ -3,6 +3,8 @@ bin/
 obj/
 Settings/bin/
 Settings/obj/
+Scripts/*.pdb
+Scripts/*.deps.json
 
 # Runtime session logs
 logs/

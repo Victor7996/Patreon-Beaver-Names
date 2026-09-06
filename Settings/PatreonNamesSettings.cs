@@ -20,6 +20,8 @@ namespace Mods.PatreonBeaverNames.Settings {
   /// </summary>
   public class PatreonNamesSettings : ModSettingsOwner {
 
+    private readonly ModSettingsOwnerRegistry _modSettingsOwnerRegistry;
+
     public LongStringModSetting NamesSetting { get; }
 
     public PatreonNamesSettings(
@@ -28,6 +30,7 @@ namespace Mods.PatreonBeaverNames.Settings {
         ModRepository modRepository)
         : base(defaultModFileStoredSettings, modSettingsOwnerRegistry, modRepository) {
 
+      _modSettingsOwnerRegistry = modSettingsOwnerRegistry;
       string initialText = PatreonSettingsApi.GetNames?.Invoke() ?? string.Empty;
 
       NamesSetting = new LongStringModSetting(
@@ -45,6 +48,9 @@ namespace Mods.PatreonBeaverNames.Settings {
     protected override string ModId => "Victor7996.PatreonBeaverNames";
 
     protected override void OnAfterLoad() {
+      // Defensive deduplication to ensure exactly one owner entry exists in the registry
+      DeduplicateRegistry();
+
       // Synchronize with patreons.csv if available
       string currentCsv = PatreonSettingsApi.GetNames?.Invoke();
       if (!string.IsNullOrEmpty(currentCsv) && NamesSetting.Value != currentCsv) {
@@ -52,6 +58,28 @@ namespace Mods.PatreonBeaverNames.Settings {
       }
 
       NamesSetting.ValueChanged += OnNamesSettingChanged;
+    }
+
+    private void DeduplicateRegistry() {
+      try {
+        var field = typeof(ModSettingsOwnerRegistry).GetField(
+            "_modSettingOwners",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (field?.GetValue(_modSettingsOwnerRegistry) is System.Collections.IDictionary dict) {
+          foreach (System.Collections.DictionaryEntry entry in dict) {
+            if (entry.Value is System.Collections.IList list) {
+              for (int i = list.Count - 1; i >= 0; i--) {
+                var item = list[i];
+                if (item != null && item.GetType() == GetType() && !ReferenceEquals(item, this)) {
+                  list.RemoveAt(i);
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignored
+      }
     }
 
     private void OnNamesSettingChanged(object sender, string newRaw) {

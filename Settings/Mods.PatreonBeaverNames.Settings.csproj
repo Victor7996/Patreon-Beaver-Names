@@ -11,6 +11,10 @@
     <ModSettingsWorkshopDir>D:\SteamLibrary\steamapps\workshop\content\1062090\3283831040\version-1.0\Scripts</ModSettingsWorkshopDir>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+
+    <!-- Redirect build outputs outside the mod directory -->
+    <OutputPath>$(LocalAppData)\TimberbornBuild\PatreonBeaverNames\$(MSBuildProjectName)\bin\$(Configuration)\</OutputPath>
+    <OutDir>$(OutputPath)</OutDir>
   </PropertyGroup>
 
   <ItemGroup>

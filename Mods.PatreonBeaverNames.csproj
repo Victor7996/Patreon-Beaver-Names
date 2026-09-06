@@ -10,6 +10,10 @@
     <TimberbornManagedDir>D:\SteamLibrary\steamapps\common\Timberborn\Timberborn_Data\Managed</TimberbornManagedDir>
     <!-- Completely exclude the Settings subproject from this project's item globbing -->
     <DefaultItemExcludes>$(DefaultItemExcludes);Settings/**;Settings\**</DefaultItemExcludes>
+
+    <!-- Output the single mod DLL directly into Scripts/ -->
+    <OutputPath>$(MSBuildProjectDirectory)\Scripts\</OutputPath>
+    <OutDir>$(OutputPath)</OutDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -67,19 +71,15 @@
     </Reference>
   </ItemGroup>
 
-  <!-- Build Settings integration assembly before packaging -->
+  <!-- Build Settings integration assembly into outside build dir before packaging -->
   <Target Name="BuildSettingsProject" BeforeTargets="BeforeBuild">
     <MSBuild Projects="Settings\Mods.PatreonBeaverNames.Settings.csproj" Properties="Configuration=$(Configuration)" Targets="Build" />
   </Target>
 
   <ItemGroup>
-    <EmbeddedResource Include="Settings\bin\$(Configuration)\Mods.PatreonBeaverNames.Settings.dll">
+    <EmbeddedResource Include="$(LocalAppData)\TimberbornBuild\PatreonBeaverNames\Mods.PatreonBeaverNames.Settings\bin\$(Configuration)\Mods.PatreonBeaverNames.Settings.dll">
       <LogicalName>Mods.PatreonBeaverNames.Settings.dll</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
-
-  <Target Name="CopyToScripts" AfterTargets="Build">
-    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildProjectDirectory)\Scripts" />
-  </Target>
 
 </Project>
