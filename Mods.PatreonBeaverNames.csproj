@@ -11,8 +11,8 @@
     <!-- Completely exclude the Settings subproject from this project's item globbing -->
     <DefaultItemExcludes>$(DefaultItemExcludes);Settings/**;Settings\**</DefaultItemExcludes>
 
-    <!-- Output the single mod DLL directly into Scripts/ -->
-    <OutputPath>$(MSBuildProjectDirectory)\Scripts\</OutputPath>
+    <!-- Build output outside the mod directory to avoid bin/ and obj/ folders in the mod -->
+    <OutputPath>$(LocalAppData)\TimberbornBuild\PatreonBeaverNames\$(MSBuildProjectName)\bin\$(Configuration)\</OutputPath>
     <OutDir>$(OutputPath)</OutDir>
   </PropertyGroup>
 
@@ -81,5 +81,10 @@
       <LogicalName>Mods.PatreonBeaverNames.Settings.dll</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
+
+  <!-- Deploy only the final DLL directly into Scripts/ -->
+  <Target Name="DeployDllToScripts" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildProjectDirectory)\Scripts" />
+  </Target>
 
 </Project>
