@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>Mods.PatreonBeaverNames.Settings</AssemblyName>
+    <RootNamespace>Mods.PatreonBeaverNames.Settings</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <TimberbornManagedDir>D:\SteamLibrary\steamapps\common\Timberborn\Timberborn_Data\Managed</TimberbornManagedDir>
+    <ModSettingsWorkshopDir>D:\SteamLibrary\steamapps\workshop\content\1062090\3283831040\version-1.0\Scripts</ModSettingsWorkshopDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(TimberbornManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Bindito.Core">
+      <HintPath>$(TimberbornManagedDir)\Bindito.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.Modding">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.Modding.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.SettingsSystem">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.SettingsSystem.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.SingletonSystem">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.SingletonSystem.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.Common">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ModSettings.Core">
+      <HintPath>$(ModSettingsWorkshopDir)\ModSettings.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ModSettings.Common">
+      <HintPath>$(ModSettingsWorkshopDir)\ModSettings.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

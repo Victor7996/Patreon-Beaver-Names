@@ -1,0 +1,16 @@
+# Build results
+bin/
+obj/
+Settings/bin/
+Settings/obj/
+
+# Runtime session logs
+logs/
+
+# IDE & OS files
+.vscode/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db

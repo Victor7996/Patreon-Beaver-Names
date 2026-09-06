@@ -1,0 +1,85 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>Mods.PatreonBeaverNames</AssemblyName>
+    <RootNamespace>Mods.PatreonBeaverNames</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <TimberbornManagedDir>D:\SteamLibrary\steamapps\common\Timberborn\Timberborn_Data\Managed</TimberbornManagedDir>
+  </PropertyGroup>
+
+  <!-- Exclude the Settings subproject sources and obj from main mod compilation -->
+  <ItemGroup>
+    <Compile Remove="Settings\**" />
+    <None Remove="Settings\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(TimberbornManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Bindito.Core">
+      <HintPath>$(TimberbornManagedDir)\Bindito.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.ModManagerScene">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.ModManagerScene.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.Modding">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.Modding.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.EntityNaming">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.EntityNaming.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.Beavers">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.Beavers.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.Characters">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.Characters.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.SingletonSystem">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.SingletonSystem.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.WorldPersistence">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.WorldPersistence.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.BaseComponentSystem">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.BaseComponentSystem.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.Persistence">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.Persistence.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Timberborn.Common">
+      <HintPath>$(TimberbornManagedDir)\Timberborn.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Build Settings integration assembly before packaging -->
+  <Target Name="BuildSettingsProject" BeforeTargets="BeforeBuild">
+    <MSBuild Projects="Settings\Mods.PatreonBeaverNames.Settings.csproj" Properties="Configuration=$(Configuration)" Targets="Build" />
+  </Target>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Settings\bin\$(Configuration)\Mods.PatreonBeaverNames.Settings.dll">
+      <LogicalName>Mods.PatreonBeaverNames.Settings.dll</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <Target Name="CopyToScripts" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildProjectDirectory)\Scripts" />
+  </Target>
+
+</Project>
