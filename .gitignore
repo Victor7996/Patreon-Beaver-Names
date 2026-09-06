@@ -9,6 +9,9 @@ Scripts/*.deps.json
 # Runtime session logs
 logs/
 
+# Node.js
+node_modules/
+
 # IDE & OS files
 .vscode/
 .idea/

@@ -1,0 +1,12 @@
+{
+  "name": "timberborn-patreon-mock-api",
+  "version": "1.0.0",
+  "description": "Mock REST API server emulating Patreon API v2 for Patreon Beaver Names mod",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": ["timberborn", "patreon", "mock-api"],
+  "author": "Victor7996",
+  "license": "MIT"
+}
