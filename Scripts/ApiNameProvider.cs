@@ -180,12 +180,25 @@ namespace Mods.PatreonBeaverNames.Scripts {
     /// </summary>
     public static async Task FetchNamesStaticAsync(string campaignId) {
       try {
-        if (string.IsNullOrWhiteSpace(campaignId)) {
+        string resolvedCampaignId = campaignId;
+        if ((string.IsNullOrWhiteSpace(resolvedCampaignId) ||
+             string.Equals(resolvedCampaignId, "default", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(resolvedCampaignId, "auto", StringComparison.OrdinalIgnoreCase)) &&
+            !string.IsNullOrWhiteSpace(AccessToken)) {
+
+          string discoveredId = await AutoDiscoverCampaignIdAsync(AccessToken).ConfigureAwait(false);
+          if (!string.IsNullOrEmpty(discoveredId)) {
+            resolvedCampaignId = discoveredId;
+            CampaignId = discoveredId;
+          }
+        }
+
+        if (string.IsNullOrWhiteSpace(resolvedCampaignId)) {
           ModLogger.LogWarning("Campaign ID is missing in Mod Settings.");
           return;
         }
 
-        string queryUrl = PrepareRequestUrl(campaignId);
+        string queryUrl = PrepareRequestUrl(resolvedCampaignId);
         if (queryUrl.Contains("patreon.com") && string.IsNullOrWhiteSpace(AccessToken)) {
           ModLogger.LogWarning("Patreon Creator's Access Token is missing in Mod Settings. Unable to query Patreon API.");
           return;
@@ -306,8 +319,22 @@ namespace Mods.PatreonBeaverNames.Scripts {
           return;
         }
 
-        // Automatically construct the Patreon API v2 URL
-        string queryUrl = PrepareRequestUrl(campaignId);
+        // Automatically construct the Patreon API v2 URL, auto-discovering Campaign ID if necessary
+        string resolvedCampaignId = campaignId;
+        if ((string.IsNullOrWhiteSpace(resolvedCampaignId) ||
+             string.Equals(resolvedCampaignId, "default", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(resolvedCampaignId, "auto", StringComparison.OrdinalIgnoreCase)) &&
+            !string.IsNullOrWhiteSpace(AccessToken)) {
+
+          string discoveredId = await AutoDiscoverCampaignIdAsync(AccessToken).ConfigureAwait(false);
+          if (!string.IsNullOrEmpty(discoveredId)) {
+            resolvedCampaignId = discoveredId;
+            CampaignId = discoveredId;
+            // Update DiscoveredTiersSummary or notify UI if campaign ID was auto-discovered
+          }
+        }
+
+        string queryUrl = PrepareRequestUrl(resolvedCampaignId);
 
         if (queryUrl.Contains("patreon.com") && string.IsNullOrWhiteSpace(AccessToken)) {
           ModLogger.LogWarning("Patreon Creator's Access Token is missing. Please enter your Creator's Access Token in Mod Settings.");
@@ -332,7 +359,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
           if (response.StatusCode == HttpStatusCode.NotFound) {
             ModLogger.LogWarning(
                 $"Patreon API request to {queryUrl} failed with HTTP 404 (Not Found). " +
-                $"Please verify that Campaign ID '{campaignId}' is correct (Patreon Campaign IDs are siffer-ID:n like '1234567', not tokens). Using fallback name.");
+                $"Please verify that Campaign ID '{resolvedCampaignId}' is correct (Patreon Campaign IDs are siffer-ID:n like '1234567', not tokens). Using fallback name.");
           } else {
             ModLogger.LogWarning(
                 $"Patreon API request to {queryUrl} failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase}). Using fallback name.");
@@ -391,6 +418,47 @@ namespace Mods.PatreonBeaverNames.Scripts {
         ModLogger.LogError($"Unexpected error while fetching/parsing Patreon API data: {ex}. Falling back to default name.");
         MarkLoadedWithFallback();
       }
+    }
+
+    /// <summary>
+    /// Attempts to auto-discover the creator's Campaign ID using the Access Token
+    /// via the Patreon API v2 identity endpoint (/api/oauth2/v2/identity?include=campaign).
+    /// </summary>
+    private static async Task<string> AutoDiscoverCampaignIdAsync(string token) {
+      if (string.IsNullOrWhiteSpace(token)) return null;
+
+      try {
+        string identityUrl = "https://www.patreon.com/api/oauth2/v2/identity?include=campaign";
+        using var request = new HttpRequestMessage(HttpMethod.Get, identityUrl);
+        request.Headers.UserAgent.Clear();
+        request.Headers.UserAgent.ParseAdd("PatreonBeaverNames-TimberbornMod/1.0");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Trim());
+
+        HttpResponseMessage response = await HttpClient.SendAsync(request).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode) return null;
+
+        string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(json)) return null;
+
+        // Parse campaign ID from JSON or Regex
+        var match = System.Text.RegularExpressions.Regex.Match(json, @"""campaign""\s*:\s*\{\s*""data""\s*:\s*\{\s*""id""\s*:\s*""(\d+)""");
+        if (match.Success) {
+          string discoveredId = match.Groups[1].Value;
+          ModLogger.LogInfo($"Auto-discovered Patreon Campaign ID '{discoveredId}' via Creator Access Token!");
+          return discoveredId;
+        }
+
+        var matchIncluded = System.Text.RegularExpressions.Regex.Match(json, @"""type""\s*:\s*""campaign""\s*,\s*""id""\s*:\s*""(\d+)""|""id""\s*:\s*""(\d+)""\s*,\s*""type""\s*:\s*""campaign""");
+        if (matchIncluded.Success) {
+          string discoveredId = !string.IsNullOrEmpty(matchIncluded.Groups[1].Value) ? matchIncluded.Groups[1].Value : matchIncluded.Groups[2].Value;
+          ModLogger.LogInfo($"Auto-discovered Patreon Campaign ID '{discoveredId}' via Creator Access Token!");
+          return discoveredId;
+        }
+      } catch (Exception ex) {
+        ModLogger.LogWarning($"Auto-discovery of Campaign ID failed: {ex.Message}");
+      }
+
+      return null;
     }
 
     /// <summary>
