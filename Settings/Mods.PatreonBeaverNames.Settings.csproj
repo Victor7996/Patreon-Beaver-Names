@@ -9,6 +9,8 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <TimberbornManagedDir>D:\SteamLibrary\steamapps\common\Timberborn\Timberborn_Data\Managed</TimberbornManagedDir>
     <ModSettingsWorkshopDir>D:\SteamLibrary\steamapps\workshop\content\1062090\3283831040\version-1.0\Scripts</ModSettingsWorkshopDir>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
   </PropertyGroup>
 
   <ItemGroup>
