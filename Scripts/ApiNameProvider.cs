@@ -91,10 +91,19 @@ namespace Mods.PatreonBeaverNames.Scripts {
     public static bool IncludeGold { get; set; } = true;
 
     /// <summary>
-    /// Whether to include custom tiers outside the standard Bronze/Silver/Gold tiers.
-    /// Enabled by default ("stöd för custom tiers som standard").
+    /// Whether to include Diamond tier supporters ($50).
     /// </summary>
-    public static bool IncludeCustomTiers { get; set; } = true;
+    public static bool IncludeDiamond { get; set; } = true;
+
+    /// <summary>
+    /// Whether to include Master Architect tier supporters ($100).
+    /// </summary>
+    public static bool IncludeMasterArchitect { get; set; } = true;
+
+    /// <summary>
+    /// Whether to include any other unlisted custom tiers outside the standard ones.
+    /// </summary>
+    public static bool IncludeOtherCustomTiers { get; set; } = true;
 
     /// <summary>
     /// Comma-separated summary of all tiers discovered on the Patreon campaign.
@@ -120,7 +129,9 @@ namespace Mods.PatreonBeaverNames.Scripts {
         bool bronze,
         bool silver,
         bool gold,
-        bool customTiersEnabled,
+        bool diamond,
+        bool masterArchitect,
+        bool otherCustomTiers,
         string customTiers) {
 
       EndpointUrl = string.IsNullOrWhiteSpace(url) ? DefaultEndpointUrl : url.Trim();
@@ -128,12 +139,14 @@ namespace Mods.PatreonBeaverNames.Scripts {
       IncludeBronze = bronze;
       IncludeSilver = silver;
       IncludeGold = gold;
-      IncludeCustomTiers = customTiersEnabled;
+      IncludeDiamond = diamond;
+      IncludeMasterArchitect = masterArchitect;
+      IncludeOtherCustomTiers = otherCustomTiers;
       CustomTiers = customTiers ?? string.Empty;
 
       ModLogger.LogInfo(
           $"ApiNameProvider configuration updated: URL='{EndpointUrl}', AuthToken='{(string.IsNullOrEmpty(AuthToken) ? "None" : "***")}', " +
-          $"Bronze={IncludeBronze}, Silver={IncludeSilver}, Gold={IncludeGold}, CustomTiersEnabled={IncludeCustomTiers}, CustomTiersFilter='{CustomTiers}'");
+          $"Bronze={IncludeBronze}, Silver={IncludeSilver}, Gold={IncludeGold}, Diamond={IncludeDiamond}, MasterArchitect={IncludeMasterArchitect}, OtherCustomTiers={IncludeOtherCustomTiers}, CustomTiersFilter='{CustomTiers}'");
     }
 
     /// <summary>
@@ -256,7 +269,9 @@ namespace Mods.PatreonBeaverNames.Scripts {
             IncludeBronze,
             IncludeSilver,
             IncludeGold,
-            IncludeCustomTiers,
+            IncludeDiamond,
+            IncludeMasterArchitect,
+            IncludeOtherCustomTiers,
             CustomTiers);
 
         if (parsedNames.Count == 0) {
@@ -274,7 +289,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
         ModLogger.LogInfo(
             $"Successfully fetched and filtered {_names.Count} Patreon supporter name(s) conforming to OpenAPI schema " +
-            $"(Tiers: Bronze={IncludeBronze}, Silver={IncludeSilver}, Gold={IncludeGold}, CustomTiers={IncludeCustomTiers}).");
+            $"(Tiers: Bronze={IncludeBronze}, Silver={IncludeSilver}, Gold={IncludeGold}, Diamond={IncludeDiamond}, MasterArchitect={IncludeMasterArchitect}, OtherCustomTiers={IncludeOtherCustomTiers}).");
 
       } catch (TaskCanceledException ex) {
         ModLogger.LogWarning($"Patreon API request timed out: {ex.Message}. Falling back to default name.");
@@ -309,19 +324,14 @@ namespace Mods.PatreonBeaverNames.Scripts {
     /// Dynamically discovers all tiers from the campaign (both standard and custom),
     /// and filters members based on active tier settings.
     /// </summary>
-    /// <param name="json">Raw JSON:API string.</param>
-    /// <param name="includeBronze">Whether to include Bronze tier ($5).</param>
-    /// <param name="includeSilver">Whether to include Silver tier ($10).</param>
-    /// <param name="includeGold">Whether to include Gold tier ($25).</param>
-    /// <param name="includeCustomTiers">Whether to include custom tiers as standard (default true).</param>
-    /// <param name="customTiers">Optional comma-separated custom tier titles to restrict to.</param>
-    /// <returns>List of filtered full names.</returns>
     public static List<string> ParsePatreonNamesFromJson(
         string json,
         bool includeBronze = true,
         bool includeSilver = true,
         bool includeGold = true,
-        bool includeCustomTiers = true,
+        bool includeDiamond = true,
+        bool includeMasterArchitect = true,
+        bool includeOtherCustomTiers = true,
         string customTiers = "") {
 
       var result = new List<string>();
@@ -394,7 +404,9 @@ namespace Mods.PatreonBeaverNames.Scripts {
             }
             // 3. Fallback: match by currently_entitled_amount_cents
             if (string.IsNullOrEmpty(resolvedTier) && memberAmount > 0) {
-              if (memberAmount >= 2500) resolvedTier = "Gold";
+              if (memberAmount >= 10000) resolvedTier = "Master Architect";
+              else if (memberAmount >= 5000) resolvedTier = "Diamond";
+              else if (memberAmount >= 2500) resolvedTier = "Gold";
               else if (memberAmount >= 1000) resolvedTier = "Silver";
               else if (memberAmount >= 500) resolvedTier = "Bronze";
             }
@@ -416,11 +428,15 @@ namespace Mods.PatreonBeaverNames.Scripts {
                 if (!includeSilver) continue;
               } else if (string.Equals(resolvedTier, "Gold", StringComparison.OrdinalIgnoreCase)) {
                 if (!includeGold) continue;
+              } else if (string.Equals(resolvedTier, "Diamond", StringComparison.OrdinalIgnoreCase)) {
+                if (!includeDiamond) continue;
+              } else if (string.Equals(resolvedTier, "Master Architect", StringComparison.OrdinalIgnoreCase)) {
+                if (!includeMasterArchitect) continue;
               } else {
-                if (!includeCustomTiers) continue;
+                if (!includeOtherCustomTiers) continue;
               }
             } else {
-              if (!includeCustomTiers) continue;
+              if (!includeOtherCustomTiers) continue;
             }
 
             result.Add(fullName);
@@ -445,7 +461,9 @@ namespace Mods.PatreonBeaverNames.Scripts {
               includeBronze,
               includeSilver,
               includeGold,
-              includeCustomTiers,
+              includeDiamond,
+              includeMasterArchitect,
+              includeOtherCustomTiers,
               customTierSet);
         }
 
@@ -456,7 +474,9 @@ namespace Mods.PatreonBeaverNames.Scripts {
             includeBronze,
             includeSilver,
             includeGold,
-            includeCustomTiers,
+            includeDiamond,
+            includeMasterArchitect,
+            includeOtherCustomTiers,
             customTierSet);
       }
 
@@ -471,7 +491,9 @@ namespace Mods.PatreonBeaverNames.Scripts {
         bool includeBronze,
         bool includeSilver,
         bool includeGold,
-        bool includeCustomTiers,
+        bool includeDiamond,
+        bool includeMasterArchitect,
+        bool includeOtherCustomTiers,
         HashSet<string> customTierSet) {
 
       var result = new List<string>();
@@ -534,9 +556,13 @@ namespace Mods.PatreonBeaverNames.Scripts {
             if (string.Equals(tier, "Bronze", StringComparison.OrdinalIgnoreCase) && !includeBronze) continue;
             if (string.Equals(tier, "Silver", StringComparison.OrdinalIgnoreCase) && !includeSilver) continue;
             if (string.Equals(tier, "Gold", StringComparison.OrdinalIgnoreCase) && !includeGold) continue;
+            if (string.Equals(tier, "Diamond", StringComparison.OrdinalIgnoreCase) && !includeDiamond) continue;
+            if (string.Equals(tier, "Master Architect", StringComparison.OrdinalIgnoreCase) && !includeMasterArchitect) continue;
             if (!string.Equals(tier, "Bronze", StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(tier, "Silver", StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(tier, "Gold", StringComparison.OrdinalIgnoreCase) && !includeCustomTiers) continue;
+                !string.Equals(tier, "Gold", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(tier, "Diamond", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(tier, "Master Architect", StringComparison.OrdinalIgnoreCase) && !includeOtherCustomTiers) continue;
           }
 
           result.Add(name);
