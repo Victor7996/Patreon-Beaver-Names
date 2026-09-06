@@ -71,6 +71,8 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
       var getNamesProp = apiType.GetProperty("GetNames", BindingFlags.Public | BindingFlags.Static);
       var setNamesProp = apiType.GetProperty("SetNames", BindingFlags.Public | BindingFlags.Static);
+      var updateConfigProp = apiType.GetProperty("UpdateApiConfig", BindingFlags.Public | BindingFlags.Static);
+      var triggerFetchProp = apiType.GetProperty("TriggerFetch", BindingFlags.Public | BindingFlags.Static);
 
       if (getNamesProp != null) {
         getNamesProp.SetValue(null, new Func<string>(() => {
@@ -81,7 +83,16 @@ namespace Mods.PatreonBeaverNames.Scripts {
         }));
       }
       if (setNamesProp != null) {
-        setNamesProp.SetValue(null, new Action<string>(CsvNameProvider.UpdateNamesFromRawText));
+        setNamesProp.SetValue(null, new Action<string>((raw) => {
+          ApiNameProvider.UpdateNamesFromRawText(raw);
+          CsvNameProvider.UpdateNamesFromRawText(raw);
+        }));
+      }
+      if (updateConfigProp != null) {
+        updateConfigProp.SetValue(null, new Action<string, string, bool, bool, bool, string>(ApiNameProvider.Configure));
+      }
+      if (triggerFetchProp != null) {
+        triggerFetchProp.SetValue(null, new Action(ApiNameProvider.TriggerFetch));
       }
 
       ModLogger.LogInfo("ModSettings bridge API callbacks successfully bound.");

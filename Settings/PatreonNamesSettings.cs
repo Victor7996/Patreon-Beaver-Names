@@ -12,16 +12,53 @@ namespace Mods.PatreonBeaverNames.Settings {
   public static class PatreonSettingsApi {
     public static Func<string> GetNames { get; set; }
     public static Action<string> SetNames { get; set; }
+
+    public static Action<string, string, bool, bool, bool, string> UpdateApiConfig { get; set; }
+    public static Action TriggerFetch { get; set; }
   }
 
   /// <summary>
-  /// ModSettingsOwner providing an in-game UI to view, add, and remove Patreon beaver names.
-  /// Supports multi-line editing via <see cref="LongStringModSetting"/>.
+  /// ModSettingsOwner providing an in-game UI to configure the Patreon REST API endpoint,
+  /// authentication token, and tier filters, as well as previewing the loaded names.
   /// </summary>
   public class PatreonNamesSettings : ModSettingsOwner {
 
     private readonly ModSettingsOwnerRegistry _modSettingsOwnerRegistry;
 
+    /// <summary>
+    /// REST API endpoint URL to fetch Patreon supporters from.
+    /// </summary>
+    public ModSetting<string> EndpointUrlSetting { get; }
+
+    /// <summary>
+    /// Optional Bearer authentication token for authenticating with the Patreon API.
+    /// </summary>
+    public ModSetting<string> AuthTokenSetting { get; }
+
+    /// <summary>
+    /// Whether to include supporters belonging to the Bronze tier ($5+).
+    /// </summary>
+    public ModSetting<bool> IncludeBronzeTierSetting { get; }
+
+    /// <summary>
+    /// Whether to include supporters belonging to the Silver tier ($10+).
+    /// </summary>
+    public ModSetting<bool> IncludeSilverTierSetting { get; }
+
+    /// <summary>
+    /// Whether to include supporters belonging to the Gold tier ($25+).
+    /// </summary>
+    public ModSetting<bool> IncludeGoldTierSetting { get; }
+
+    /// <summary>
+    /// Optional comma-separated custom tier titles to match against.
+    /// When set, this overrides the default Bronze/Silver/Gold toggles.
+    /// </summary>
+    public ModSetting<string> CustomTiersSetting { get; }
+
+    /// <summary>
+    /// Multi-line text field displaying the active/preview list of loaded supporter names.
+    /// </summary>
     public LongStringModSetting NamesSetting { get; }
 
     public PatreonNamesSettings(
@@ -31,12 +68,48 @@ namespace Mods.PatreonBeaverNames.Settings {
         : base(defaultModFileStoredSettings, modSettingsOwnerRegistry, modRepository) {
 
       _modSettingsOwnerRegistry = modSettingsOwnerRegistry;
-      string initialText = PatreonSettingsApi.GetNames?.Invoke() ?? string.Empty;
 
+      EndpointUrlSetting = new ModSetting<string>(
+          "http://localhost:3000/api/patreons",
+          ModSettingDescriptor.Create("Patreon API Endpoint URL")
+              .SetTooltip("The REST API URL serving Patreon supporters in Patreon API v2 schema.")
+      );
+
+      AuthTokenSetting = new ModSetting<string>(
+          string.Empty,
+          ModSettingDescriptor.Create("API Bearer Token (Authentication)")
+              .SetTooltip("Optional Bearer token sent in the Authorization header. Use to test secure API endpoints.")
+      );
+
+      IncludeBronzeTierSetting = new ModSetting<bool>(
+          true,
+          ModSettingDescriptor.Create("Include Bronze Tier ($5)")
+              .SetTooltip("Check to include Bronze tier Patreon supporters in the beaver name pool.")
+      );
+
+      IncludeSilverTierSetting = new ModSetting<bool>(
+          true,
+          ModSettingDescriptor.Create("Include Silver Tier ($10)")
+              .SetTooltip("Check to include Silver tier Patreon supporters in the beaver name pool.")
+      );
+
+      IncludeGoldTierSetting = new ModSetting<bool>(
+          true,
+          ModSettingDescriptor.Create("Include Gold Tier ($25)")
+              .SetTooltip("Check to include Gold tier Patreon supporters in the beaver name pool.")
+      );
+
+      CustomTiersSetting = new ModSetting<string>(
+          string.Empty,
+          ModSettingDescriptor.Create("Custom Tier Filter (Optional)")
+              .SetTooltip("Optional comma-separated list of custom tier names (e.g. 'Champion, Hero'). Overrides toggles above.")
+      );
+
+      string initialText = PatreonSettingsApi.GetNames?.Invoke() ?? string.Empty;
       NamesSetting = new LongStringModSetting(
           initialText,
-          ModSettingDescriptor.Create("Patreon Beaver Names")
-              .SetTooltip("List of beaver names (one per line). Adding or removing lines updates the active game and patreons.csv.")
+          ModSettingDescriptor.Create("Loaded Beaver Names (Preview)")
+              .SetTooltip("List of currently active names fetched from the Patreon API. Updates automatically when settings change.")
       );
     }
 
@@ -51,13 +124,45 @@ namespace Mods.PatreonBeaverNames.Settings {
       // Defensive deduplication to ensure exactly one owner entry exists in the registry
       DeduplicateRegistry();
 
-      // Synchronize with patreons.csv if available
-      string currentCsv = PatreonSettingsApi.GetNames?.Invoke();
-      if (!string.IsNullOrEmpty(currentCsv) && NamesSetting.Value != currentCsv) {
-        NamesSetting.SetValue(currentCsv);
-      }
+      // Listen to setting changes and push updates to the API client
+      EndpointUrlSetting.ValueChanged += (_, _) => OnConfigChanged();
+      AuthTokenSetting.ValueChanged += (_, _) => OnConfigChanged();
+      IncludeBronzeTierSetting.ValueChanged += (_, _) => OnConfigChanged();
+      IncludeSilverTierSetting.ValueChanged += (_, _) => OnConfigChanged();
+      IncludeGoldTierSetting.ValueChanged += (_, _) => OnConfigChanged();
+      CustomTiersSetting.ValueChanged += (_, _) => OnConfigChanged();
 
       NamesSetting.ValueChanged += OnNamesSettingChanged;
+
+      // Push initial stored settings to the mod
+      PushSettingsToMod();
+
+      // Synchronize names preview
+      SyncNamesPreview();
+    }
+
+    private void OnConfigChanged() {
+      PushSettingsToMod();
+      PatreonSettingsApi.TriggerFetch?.Invoke();
+      SyncNamesPreview();
+    }
+
+    private void PushSettingsToMod() {
+      PatreonSettingsApi.UpdateApiConfig?.Invoke(
+          EndpointUrlSetting.Value,
+          AuthTokenSetting.Value,
+          IncludeBronzeTierSetting.Value,
+          IncludeSilverTierSetting.Value,
+          IncludeGoldTierSetting.Value,
+          CustomTiersSetting.Value
+      );
+    }
+
+    private void SyncNamesPreview() {
+      string currentNames = PatreonSettingsApi.GetNames?.Invoke();
+      if (!string.IsNullOrEmpty(currentNames) && NamesSetting.Value != currentNames) {
+        NamesSetting.SetValue(currentNames);
+      }
     }
 
     private void DeduplicateRegistry() {
