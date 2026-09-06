@@ -12,6 +12,7 @@ namespace Mods.PatreonBeaverNames.Settings {
   public static class PatreonSettingsApi {
     public static Func<string> GetNames { get; set; }
     public static Action<string> SetNames { get; set; }
+    public static Action<string> OnNamesUpdated { get; set; }
     public static Func<string> GetDiscoveredTiers { get; set; }
     public static Action<string> OnTiersDiscovered { get; set; }
 
@@ -161,14 +162,21 @@ namespace Mods.PatreonBeaverNames.Settings {
 
       NamesSetting.ValueChanged += OnNamesSettingChanged;
 
-      // Register listener for live tier discoveries from ApiNameProvider
+      // Register listener for live tier discoveries and name updates from ApiNameProvider
       PatreonSettingsApi.OnTiersDiscovered = OnTiersDiscoveredCallback;
+      PatreonSettingsApi.OnNamesUpdated = OnNamesUpdatedCallback;
 
       // Push initial stored settings to the mod
       PushSettingsToMod();
 
       // Synchronize names and discovered tiers preview
       SyncPreviews();
+    }
+
+    private void OnNamesUpdatedCallback(string namesText) {
+      if (!string.IsNullOrEmpty(namesText) && NamesSetting.Value != namesText) {
+        NamesSetting.SetValue(namesText);
+      }
     }
 
     private void OnTiersDiscoveredCallback(string summary) {

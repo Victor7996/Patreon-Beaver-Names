@@ -71,23 +71,18 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
       var getNamesProp = apiType.GetProperty("GetNames", BindingFlags.Public | BindingFlags.Static);
       var setNamesProp = apiType.GetProperty("SetNames", BindingFlags.Public | BindingFlags.Static);
+      var onNamesUpdatedProp = apiType.GetProperty("OnNamesUpdated", BindingFlags.Public | BindingFlags.Static);
       var getDiscoveredTiersProp = apiType.GetProperty("GetDiscoveredTiers", BindingFlags.Public | BindingFlags.Static);
       var onTiersDiscoveredProp = apiType.GetProperty("OnTiersDiscovered", BindingFlags.Public | BindingFlags.Static);
       var updateConfigProp = apiType.GetProperty("UpdateApiConfig", BindingFlags.Public | BindingFlags.Static);
       var triggerFetchProp = apiType.GetProperty("TriggerFetch", BindingFlags.Public | BindingFlags.Static);
 
       if (getNamesProp != null) {
-        getNamesProp.SetValue(null, new Func<string>(() => {
-          if (ApiNameProvider.Current != null) {
-            return ApiNameProvider.GetRawNamesText();
-          }
-          return CsvNameProvider.GetRawNamesText();
-        }));
+        getNamesProp.SetValue(null, new Func<string>(ApiNameProvider.GetRawNamesText));
       }
       if (setNamesProp != null) {
         setNamesProp.SetValue(null, new Action<string>((raw) => {
           ApiNameProvider.UpdateNamesFromRawText(raw);
-          CsvNameProvider.UpdateNamesFromRawText(raw);
         }));
       }
       if (getDiscoveredTiersProp != null) {
@@ -100,7 +95,17 @@ namespace Mods.PatreonBeaverNames.Scripts {
         triggerFetchProp.SetValue(null, new Action(ApiNameProvider.TriggerFetch));
       }
 
-      // Automatically forward runtime discovered tiers to Settings UI
+      // Automatically forward runtime discovered names and tiers to Settings UI
+      ApiNameProvider.NamesUpdated += (namesText) => {
+        try {
+          if (onNamesUpdatedProp?.GetValue(null) is Action<string> onUpdated) {
+            onUpdated(namesText);
+          }
+        } catch {
+          // Ignore
+        }
+      };
+
       ApiNameProvider.TiersDiscovered += (summary) => {
         try {
           if (onTiersDiscoveredProp?.GetValue(null) is Action<string> onDiscovered) {

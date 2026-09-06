@@ -137,13 +137,67 @@ namespace Mods.PatreonBeaverNames.Scripts {
     }
 
     /// <summary>
-    /// Refetches names from the configured API endpoint if an instance is active.
+    /// Event fired whenever beaver names are updated from an API fetch.
+    /// </summary>
+    public static event Action<string> NamesUpdated;
+
+    /// <summary>
+    /// Static names cache for Main Menu settings preview when Current instance is not active.
+    /// </summary>
+    private static readonly object StaticLock = new();
+    private static readonly List<string> StaticNames = new();
+
+    /// <summary>
+    /// Refetches names from the configured API endpoint.
     /// </summary>
     public static void TriggerFetch() {
-      if (Current != null) {
-        Task.Run(async () => {
+      Task.Run(async () => {
+        if (Current != null) {
           await Current.FetchNamesAsync(EndpointUrl);
-        });
+        } else {
+          await FetchNamesStaticAsync(EndpointUrl);
+        }
+      });
+    }
+
+    /// <summary>
+    /// Performs a static API fetch for Main Menu previews.
+    /// </summary>
+    public static async Task FetchNamesStaticAsync(string url) {
+      try {
+        string queryUrl = PrepareRequestUrl(url);
+        using var request = new HttpRequestMessage(HttpMethod.Get, queryUrl);
+        request.Headers.UserAgent.Clear();
+        request.Headers.UserAgent.ParseAdd("PatreonBeaverNames-TimberbornMod/1.0");
+
+        if (!string.IsNullOrWhiteSpace(AuthToken)) {
+          request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", AuthToken.Trim());
+        }
+
+        HttpResponseMessage response = await HttpClient.SendAsync(request).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode) return;
+
+        string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(json)) return;
+
+        List<string> parsedNames = ParsePatreonNamesFromJson(
+            json,
+            IncludeBronze,
+            IncludeSilver,
+            IncludeGold,
+            IncludeCustomTiers,
+            CustomTiers);
+
+        if (parsedNames.Count > 0) {
+          lock (StaticLock) {
+            StaticNames.Clear();
+            StaticNames.AddRange(parsedNames);
+          }
+          string text = string.Join(Environment.NewLine, parsedNames);
+          NamesUpdated?.Invoke(text);
+        }
+      } catch {
+        // Ignore static preview fetch errors
       }
     }
 
@@ -271,6 +325,14 @@ namespace Mods.PatreonBeaverNames.Scripts {
           _names.AddRange(parsedNames);
           IsLoaded = true;
         }
+
+        lock (StaticLock) {
+          StaticNames.Clear();
+          StaticNames.AddRange(parsedNames);
+        }
+
+        string namesText = string.Join(Environment.NewLine, parsedNames);
+        NamesUpdated?.Invoke(namesText);
 
         ModLogger.LogInfo(
             $"Successfully fetched and filtered {_names.Count} Patreon supporter name(s) conforming to OpenAPI schema " +
@@ -572,16 +634,27 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
     /// <summary>
     /// Provides the raw names joined by newline for UI inspectability (e.g. in Mod Settings).
+    /// Works seamlessly in both Main Menu and Game context.
     /// </summary>
     /// <returns>Multiline string of loaded names or fallback placeholder.</returns>
     public static string GetRawNamesText() {
       if (Current != null) {
         lock (Current._lock) {
-          if (Current._names.Count > 0) {
+          if (Current._names.Count > 0 && !(Current._names.Count == 1 && Current._names[0] == FallbackName)) {
             return string.Join(Environment.NewLine, Current._names);
           }
         }
       }
+
+      lock (StaticLock) {
+        if (StaticNames.Count > 0) {
+          return string.Join(Environment.NewLine, StaticNames);
+        }
+      }
+
+      // Auto-trigger background fetch so Main Menu preview populates automatically
+      TriggerFetch();
+
       return FallbackName;
     }
 
@@ -597,6 +670,11 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
       if (lines.Count == 0) {
         lines.Add(FallbackName);
+      }
+
+      lock (StaticLock) {
+        StaticNames.Clear();
+        StaticNames.AddRange(lines);
       }
 
       if (Current != null) {
