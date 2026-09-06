@@ -57,3 +57,13 @@ See [CHANGELOG.md](CHANGELOG.md) for full version history.
 ## 👤 Author
 
 - **Victor7996** - [GitHub Profile](https://github.com/Victor7996)
+
+---
+
+## ☕ Support
+
+If you enjoy this mod and want to support its development:
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Victor7996) 
+
+a
