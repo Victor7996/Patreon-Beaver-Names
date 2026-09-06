@@ -119,6 +119,14 @@ namespace Mods.PatreonBeaverNames.Scripts {
       ModLogger.LogInfo("ModSettings bridge API callbacks successfully bound.");
     }
 
+    /// <summary>
+    /// Resets static cached state if needed across session or domain reloads.
+    /// </summary>
+    public static void ResetState() {
+      _settingsAssembly = null;
+      _apiBound = false;
+    }
+
     private static Assembly LoadEmbeddedSettingsAssembly() {
       Assembly mainAsm = typeof(ModSettingsBridge).Assembly;
       string resourceName = mainAsm.GetManifestResourceNames()

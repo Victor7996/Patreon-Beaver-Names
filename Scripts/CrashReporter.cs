@@ -12,11 +12,11 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
   /// <summary>
   /// Manages crash detection reporting and transmits crash details and session log attachments
-  /// to the central crash reporting ingest endpoint (https://crashvictor7996.se/api/v1/report).
+  /// to the central crash reporting ingest endpoint (https://crash.victor7996.se/api/v1/report).
   /// </summary>
   public static class CrashReporter {
 
-    private const string IngestUrl = "https://crashvictor7996.se/api/v1/report";
+    private const string IngestUrl = "https://crash.victor7996.se/api/v1/report";
 
     private const int MaxReportsPerSession = 5;
     private static readonly TimeSpan MinIntervalBetweenReports = TimeSpan.FromSeconds(5);

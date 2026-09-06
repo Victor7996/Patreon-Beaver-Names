@@ -14,6 +14,9 @@ namespace Mods.PatreonBeaverNames.Scripts {
     private static bool _initialized;
     private static StreamWriter _writer;
 
+    [ThreadStatic]
+    private static bool _isLogging;
+
     /// <summary>
     /// Unique identifier for the current game execution run.
     /// </summary>
@@ -65,7 +68,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
           WriteRawLine(" Timberborn Patreon Beaver Names Mod — Session Log");
           WriteRawLine($" Session UUID : {SessionId}");
           WriteRawLine($" Start Time   : {DateTime.Now:yyyy-MM-dd HH:mm:ss} (Local) / {SessionStartTime:yyyy-MM-dd HH:mm:ss} (UTC)");
-          WriteRawLine($" Mod Version  : 0.1.0 (Victor7996.PatreonBeaverNames)");
+          WriteRawLine($" Mod Version  : 1.0.0 (Victor7996.PatreonBeaverNames)");
           WriteRawLine($" Unity Version: {Application.unityVersion}");
           WriteRawLine($" Mod Path     : {ModPath}");
           WriteRawLine("================================================================================");
@@ -115,18 +118,27 @@ namespace Mods.PatreonBeaverNames.Scripts {
     /// Handles log messages forwarded from Unity's logging system.
     /// </summary>
     private static void OnLogMessageReceived(string condition, string stackTrace, LogType type) {
-      string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
-      string logLine = $"[{timestamp}] [{type}] {condition}";
-
-      lock (FileLock) {
-        WriteRawLine(logLine);
-        if (!string.IsNullOrEmpty(stackTrace)) {
-          WriteRawLine($"    Stack: {stackTrace.TrimEnd().Replace("\n", "\n    ")}");
-        }
+      if (_isLogging) {
+        return;
       }
 
-      if (type == LogType.Exception || type == LogType.Assert) {
-        CrashReporter.ReportCrash(condition, stackTrace, isUnhandled: false);
+      _isLogging = true;
+      try {
+        string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+        string logLine = $"[{timestamp}] [{type}] {condition}";
+
+        lock (FileLock) {
+          WriteRawLine(logLine);
+          if (!string.IsNullOrEmpty(stackTrace)) {
+            WriteRawLine($"    Stack: {stackTrace.TrimEnd().Replace("\n", "\n    ")}");
+          }
+        }
+
+        if (type == LogType.Exception || type == LogType.Assert) {
+          CrashReporter.ReportCrash(condition, stackTrace, isUnhandled: false);
+        }
+      } finally {
+        _isLogging = false;
       }
     }
 

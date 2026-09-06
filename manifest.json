@@ -1,9 +1,9 @@
 {
   "Name": "Patreon Beaver Names",
-  "Version": "0.1.0",
+  "Version": "1.0.0",
   "Id": "Victor7996.PatreonBeaverNames",
   "MinimumGameVersion": "1.0.0.0",
-  "Description": "Names newborn beavers sequentially from a list of Patreon supporters defined in patreons.csv. The current position in the list is saved with the game.",
+  "Description": "Names newborn beavers sequentially from a list of Patreon supporters defined in patreons.csv or live via the Patreon REST API v2. The current position in the list is saved with the game.",
   "RequiredMods": [],
   "OptionalMods": [
     {

@@ -224,34 +224,62 @@ namespace Mods.PatreonBeaverNames.Scripts {
           return;
         }
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, queryUrl);
-        request.Headers.UserAgent.Clear();
-        request.Headers.UserAgent.ParseAdd("PatreonBeaverNames-TimberbornMod/1.0");
+        string currentUrl = queryUrl;
+        var allParsedNames = new List<string>();
+        int pageLimit = 50; // Safety guard against infinite pagination loops
+        int pageCount = 0;
 
-        if (!string.IsNullOrWhiteSpace(AccessToken)) {
-          request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", AccessToken.Trim());
+        while (!string.IsNullOrEmpty(currentUrl) && pageCount < pageLimit) {
+          pageCount++;
+          using var request = new HttpRequestMessage(HttpMethod.Get, currentUrl);
+          request.Headers.UserAgent.Clear();
+          request.Headers.UserAgent.ParseAdd("PatreonBeaverNames-TimberbornMod/1.0");
+
+          if (!string.IsNullOrWhiteSpace(AccessToken)) {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", AccessToken.Trim());
+          }
+
+          HttpResponseMessage response = await HttpClient.SendAsync(request).ConfigureAwait(false);
+
+          if (response.StatusCode == (HttpStatusCode)429) {
+            TimeSpan delay = TimeSpan.FromSeconds(5);
+            if (response.Headers.RetryAfter != null) {
+              if (response.Headers.RetryAfter.Delta.HasValue) {
+                delay = response.Headers.RetryAfter.Delta.Value;
+              } else if (response.Headers.RetryAfter.Date.HasValue) {
+                var diff = response.Headers.RetryAfter.Date.Value - DateTimeOffset.UtcNow;
+                if (diff > TimeSpan.Zero) delay = diff;
+              }
+            }
+            ModLogger.LogWarning($"Patreon API rate limit hit (HTTP 429). Retrying after {delay.TotalSeconds:F1}s...");
+            await Task.Delay(delay).ConfigureAwait(false);
+            continue;
+          }
+
+          if (!response.IsSuccessStatusCode) break;
+
+          string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+          if (string.IsNullOrWhiteSpace(json)) break;
+
+          List<string> pageNames = ParsePatreonNamesFromJson(
+              json,
+              IncludeBronze,
+              IncludeSilver,
+              IncludeGold,
+              IncludeCustomTiers,
+              CustomTiers);
+
+          allParsedNames.AddRange(pageNames);
+
+          currentUrl = ExtractNextPageUrl(queryUrl, json);
         }
 
-        HttpResponseMessage response = await HttpClient.SendAsync(request).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode) return;
-
-        string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(json)) return;
-
-        List<string> parsedNames = ParsePatreonNamesFromJson(
-            json,
-            IncludeBronze,
-            IncludeSilver,
-            IncludeGold,
-            IncludeCustomTiers,
-            CustomTiers);
-
-        if (parsedNames.Count > 0) {
+        if (allParsedNames.Count > 0) {
           lock (StaticLock) {
             StaticNames.Clear();
-            StaticNames.AddRange(parsedNames);
+            StaticNames.AddRange(allParsedNames);
           }
-          string text = string.Join(Environment.NewLine, parsedNames);
+          string text = string.Join(Environment.NewLine, allParsedNames);
           NamesUpdated?.Invoke(text);
         }
       } catch {
@@ -403,48 +431,81 @@ namespace Mods.PatreonBeaverNames.Scripts {
           return;
         }
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, queryUrl);
+        string currentUrl = queryUrl;
+        var allParsedNames = new List<string>();
+        int pageLimit = 50; // Safety guard against infinite pagination loops
+        int pageCount = 0;
 
-        // Required User-Agent per openapi.json components/parameters/userAgent
-        request.Headers.UserAgent.Clear();
-        request.Headers.UserAgent.ParseAdd("PatreonBeaverNames-TimberbornMod/1.0");
+        while (!string.IsNullOrEmpty(currentUrl) && pageCount < pageLimit) {
+          pageCount++;
+          using var request = new HttpRequestMessage(HttpMethod.Get, currentUrl);
 
-        // Attach Authorization header if token is provided
-        if (!string.IsNullOrWhiteSpace(AccessToken)) {
-          request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", AccessToken.Trim());
-        }
+          // Required User-Agent per openapi.json components/parameters/userAgent
+          request.Headers.UserAgent.Clear();
+          request.Headers.UserAgent.ParseAdd("PatreonBeaverNames-TimberbornMod/1.0");
 
-        HttpResponseMessage response = await HttpClient.SendAsync(request).ConfigureAwait(false);
-
-        if (!response.IsSuccessStatusCode) {
-          if (response.StatusCode == HttpStatusCode.NotFound) {
-            ModLogger.LogWarning(
-                $"Patreon API request to {queryUrl} failed with HTTP 404 (Not Found). " +
-                $"Please verify that Campaign ID '{resolvedCampaignId}' is correct (Patreon Campaign IDs are siffer-ID:n like '1234567', not tokens). Using fallback name.");
-          } else {
-            ModLogger.LogWarning(
-                $"Patreon API request to {queryUrl} failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase}). Using fallback name.");
+          // Attach Authorization header if token is provided
+          if (!string.IsNullOrWhiteSpace(AccessToken)) {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", AccessToken.Trim());
           }
-          MarkLoadedWithFallback();
-          return;
+
+          HttpResponseMessage response = await HttpClient.SendAsync(request).ConfigureAwait(false);
+
+          if (response.StatusCode == (HttpStatusCode)429) {
+            TimeSpan delay = TimeSpan.FromSeconds(5);
+            if (response.Headers.RetryAfter != null) {
+              if (response.Headers.RetryAfter.Delta.HasValue) {
+                delay = response.Headers.RetryAfter.Delta.Value;
+              } else if (response.Headers.RetryAfter.Date.HasValue) {
+                var diff = response.Headers.RetryAfter.Date.Value - DateTimeOffset.UtcNow;
+                if (diff > TimeSpan.Zero) delay = diff;
+              }
+            }
+            ModLogger.LogWarning($"Patreon API rate limit hit (HTTP 429). Retrying after {delay.TotalSeconds:F1}s...");
+            await Task.Delay(delay).ConfigureAwait(false);
+            continue;
+          }
+
+          if (!response.IsSuccessStatusCode) {
+            if (response.StatusCode == HttpStatusCode.NotFound) {
+              ModLogger.LogWarning(
+                  $"Patreon API request to {currentUrl} failed with HTTP 404 (Not Found). " +
+                  $"Please verify that Campaign ID '{resolvedCampaignId}' is correct (Patreon Campaign IDs are siffer-ID:n like '1234567', not tokens). Using fallback name.");
+            } else {
+              ModLogger.LogWarning(
+                  $"Patreon API request to {currentUrl} failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase}). Using fallback name.");
+            }
+            if (allParsedNames.Count == 0) {
+              MarkLoadedWithFallback();
+              return;
+            }
+            break;
+          }
+
+          string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+          if (string.IsNullOrWhiteSpace(json)) {
+            if (allParsedNames.Count == 0) {
+              ModLogger.LogWarning($"Patreon API returned empty response from {currentUrl}. Using fallback name.");
+              MarkLoadedWithFallback();
+              return;
+            }
+            break;
+          }
+
+          List<string> pageNames = ParsePatreonNamesFromJson(
+              json,
+              IncludeBronze,
+              IncludeSilver,
+              IncludeGold,
+              IncludeCustomTiers,
+              CustomTiers);
+
+          allParsedNames.AddRange(pageNames);
+
+          currentUrl = ExtractNextPageUrl(queryUrl, json);
         }
 
-        string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(json)) {
-          ModLogger.LogWarning($"Patreon API returned empty response from {queryUrl}. Using fallback name.");
-          MarkLoadedWithFallback();
-          return;
-        }
-
-        List<string> parsedNames = ParsePatreonNamesFromJson(
-            json,
-            IncludeBronze,
-            IncludeSilver,
-            IncludeGold,
-            IncludeCustomTiers,
-            CustomTiers);
-
-        if (parsedNames.Count == 0) {
+        if (allParsedNames.Count == 0) {
           ModLogger.LogWarning(
               $"No supporter names matched the active tier filter criteria from API response. Using fallback name.");
           MarkLoadedWithFallback();
@@ -453,20 +514,20 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
         lock (_lock) {
           _names.Clear();
-          _names.AddRange(parsedNames);
+          _names.AddRange(allParsedNames);
           IsLoaded = true;
         }
 
         lock (StaticLock) {
           StaticNames.Clear();
-          StaticNames.AddRange(parsedNames);
+          StaticNames.AddRange(allParsedNames);
         }
 
-        string namesText = string.Join(Environment.NewLine, parsedNames);
+        string namesText = string.Join(Environment.NewLine, allParsedNames);
         NamesUpdated?.Invoke(namesText);
 
         ModLogger.LogInfo(
-            $"Successfully fetched and filtered {_names.Count} Patreon supporter name(s) conforming to OpenAPI schema " +
+            $"Successfully fetched and filtered {_names.Count} Patreon supporter name(s) across {pageCount} page(s) conforming to OpenAPI schema " +
             $"(Tiers: Bronze={IncludeBronze}, Silver={IncludeSilver}, Gold={IncludeGold}, IncludeCustomTiers={IncludeCustomTiers}).");
 
       } catch (TaskCanceledException ex) {
@@ -574,6 +635,50 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
       // Official Patreon API v2 endpoint format per requirement
       return $"https://www.patreon.com/api/oauth2/v2/campaigns/{trimmed}/members?include=currently_entitled_tiers&fields[member]=full_name,patron_status,currently_entitled_amount_cents&fields[tier]=title,amount_cents";
+    }
+
+    /// <summary>
+    /// Extracts the next page URL from Patreon API v2 JSON:API response pagination meta or links.
+    /// </summary>
+    private static string ExtractNextPageUrl(string baseUrl, string json) {
+      if (string.IsNullOrWhiteSpace(json)) return null;
+
+      try {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        // Check links.next first (standard JSON:API)
+        if (root.TryGetProperty("links", out var linksEl) &&
+            linksEl.TryGetProperty("next", out var nextLinkEl) &&
+            nextLinkEl.ValueKind == JsonValueKind.String) {
+          string nextUrl = nextLinkEl.GetString();
+          if (!string.IsNullOrWhiteSpace(nextUrl)) return nextUrl;
+        }
+
+        // Check meta.pagination.cursors.next (Patreon OpenAPI spec)
+        if (root.TryGetProperty("meta", out var metaEl) &&
+            metaEl.TryGetProperty("pagination", out var pagEl) &&
+            pagEl.TryGetProperty("cursors", out var cursorsEl) &&
+            cursorsEl.TryGetProperty("next", out var nextEl) &&
+            nextEl.ValueKind == JsonValueKind.String) {
+
+          string cursor = nextEl.GetString();
+          if (!string.IsNullOrWhiteSpace(cursor)) {
+            if (baseUrl.Contains("page%5Bcursor%5D=") || baseUrl.Contains("page[cursor]=")) {
+              // Replace existing cursor parameter if present
+              int idx = baseUrl.IndexOf("page[cursor]=", StringComparison.OrdinalIgnoreCase);
+              if (idx < 0) idx = baseUrl.IndexOf("page%5Bcursor%5D=", StringComparison.OrdinalIgnoreCase);
+              string prefix = baseUrl.Substring(0, idx);
+              return baseUrl.Contains("?") ? $"{prefix}page[cursor]={Uri.EscapeDataString(cursor)}" : $"{prefix}?page[cursor]={Uri.EscapeDataString(cursor)}";
+            }
+            return baseUrl.Contains("?") ? $"{baseUrl}&page[cursor]={Uri.EscapeDataString(cursor)}" : $"{baseUrl}?page[cursor]={Uri.EscapeDataString(cursor)}";
+          }
+        }
+      } catch (Exception ex) {
+        ModLogger.LogWarning($"Failed to parse next page pagination cursor: {ex.Message}");
+      }
+
+      return null;
     }
 
     /// <summary>
