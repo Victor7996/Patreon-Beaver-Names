@@ -29,14 +29,19 @@ namespace Mods.PatreonBeaverNames.Settings {
     private readonly ModSettingsOwnerRegistry _modSettingsOwnerRegistry;
 
     /// <summary>
-    /// REST API endpoint URL to fetch Patreon supporters from.
+    /// Read-only setup instructions for end users.
     /// </summary>
-    public ModSetting<string> EndpointUrlSetting { get; }
+    public LongStringModSetting SetupGuideSetting { get; }
 
     /// <summary>
-    /// Optional Bearer authentication token for authenticating with the Patreon API.
+    /// Patreon Campaign ID.
     /// </summary>
-    public ModSetting<string> AuthTokenSetting { get; }
+    public ModSetting<string> CampaignIdSetting { get; }
+
+    /// <summary>
+    /// Creator's Access Token for authenticating with Patreon API v2.
+    /// </summary>
+    public ModSetting<string> AccessTokenSetting { get; }
 
     /// <summary>
     /// All tiers discovered automatically from the Patreon campaign API response.
@@ -83,16 +88,25 @@ namespace Mods.PatreonBeaverNames.Settings {
 
       _modSettingsOwnerRegistry = modSettingsOwnerRegistry;
 
-      EndpointUrlSetting = new ModSetting<string>(
-          "http://localhost:3000/api/patreons",
-          ModSettingDescriptor.Create("Patreon API Endpoint URL")
-              .SetTooltip("The REST API URL serving Patreon supporters in Patreon API v2 schema.")
+      SetupGuideSetting = new LongStringModSetting(
+          "SETUP INSTRUCTIONS:" + Environment.NewLine +
+          "1. Creator's Access Token: Go to patreon.com/portal -> My Clients -> Create Client, then copy your 'Creator's Access Token'." + Environment.NewLine +
+          "2. Campaign ID: Go to your Patreon page, right-click -> View Page Source, and search for 'campaign_id'." + Environment.NewLine +
+          "3. Enter both values below. Your Patreon supporters will load automatically into beaver names!",
+          ModSettingDescriptor.Create("Setup Guide")
+              .SetTooltip("Step-by-step guide for setting up the Patreon Beaver Names mod.")
       );
 
-      AuthTokenSetting = new ModSetting<string>(
+      CampaignIdSetting = new ModSetting<string>(
+          "default",
+          ModSettingDescriptor.Create("Patreon Campaign ID")
+              .SetTooltip("Go to your Patreon page, right-click -> View Page Source, and search for 'campaign_id'.")
+      );
+
+      AccessTokenSetting = new ModSetting<string>(
           string.Empty,
-          ModSettingDescriptor.Create("API Bearer Token (Authentication)")
-              .SetTooltip("Optional Bearer token sent in the Authorization header. Use to test secure API endpoints.")
+          ModSettingDescriptor.Create("Creator's Access Token")
+              .SetTooltip("Your Creator's Access Token from the Patreon Developer Portal (patreon.com/portal).")
       );
 
       string initialDiscoveredTiers = PatreonSettingsApi.GetDiscoveredTiers?.Invoke();
@@ -152,8 +166,8 @@ namespace Mods.PatreonBeaverNames.Settings {
       DeduplicateRegistry();
 
       // Listen to setting changes and push updates to the API client
-      EndpointUrlSetting.ValueChanged += (_, _) => OnConfigChanged();
-      AuthTokenSetting.ValueChanged += (_, _) => OnConfigChanged();
+      CampaignIdSetting.ValueChanged += (_, _) => OnConfigChanged();
+      AccessTokenSetting.ValueChanged += (_, _) => OnConfigChanged();
       IncludeBronzeTierSetting.ValueChanged += (_, _) => OnConfigChanged();
       IncludeSilverTierSetting.ValueChanged += (_, _) => OnConfigChanged();
       IncludeGoldTierSetting.ValueChanged += (_, _) => OnConfigChanged();
@@ -193,8 +207,8 @@ namespace Mods.PatreonBeaverNames.Settings {
 
     private void PushSettingsToMod() {
       PatreonSettingsApi.UpdateApiConfig?.Invoke(
-          EndpointUrlSetting.Value,
-          AuthTokenSetting.Value,
+          CampaignIdSetting.Value,
+          AccessTokenSetting.Value,
           IncludeBronzeTierSetting.Value,
           IncludeSilverTierSetting.Value,
           IncludeGoldTierSetting.Value,

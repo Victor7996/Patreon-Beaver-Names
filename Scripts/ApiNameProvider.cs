@@ -24,9 +24,9 @@ namespace Mods.PatreonBeaverNames.Scripts {
   public class ApiNameProvider : INameProvider, ILoadableSingleton {
 
     /// <summary>
-    /// Default OpenAPI v2 endpoint URL matching the schema in openapi.json.
+    /// Default campaign ID used for local testing or mock API fallback.
     /// </summary>
-    public const string DefaultEndpointUrl = "http://localhost:3000/api/oauth2/v2/campaigns/default/members";
+    public const string DefaultCampaignId = "default";
 
     /// <summary>
     /// Fallback placeholder dispensed when names are still loading or if the network request fails,
@@ -44,8 +44,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
       // Configure DNS refresh timeout on Unity's ServicePointManager to prevent stale DNS records
       // while reusing the static HttpClient to avoid socket exhaustion.
       try {
-        var uri = new Uri(DefaultEndpointUrl);
-        var sp = ServicePointManager.FindServicePoint(uri);
+        var sp = ServicePointManager.FindServicePoint(new Uri("https://www.patreon.com"));
         sp.ConnectionLeaseTimeout = (int)TimeSpan.FromMinutes(1).TotalMilliseconds;
         ServicePointManager.DnsRefreshTimeout = (int)TimeSpan.FromMinutes(1).TotalMilliseconds;
       } catch {
@@ -66,14 +65,30 @@ namespace Mods.PatreonBeaverNames.Scripts {
     // Configuration Properties (Controlled via Mod Settings)
 
     /// <summary>
-    /// Current endpoint URL.
+    /// Current Patreon Campaign ID (or local/mock URL).
     /// </summary>
-    public static string EndpointUrl { get; set; } = DefaultEndpointUrl;
+    public static string CampaignId { get; set; } = DefaultCampaignId;
 
     /// <summary>
-    /// Optional Bearer authentication token for authenticating with Patreon API.
+    /// Creator's Access Token for authenticating with Patreon API.
     /// </summary>
-    public static string AuthToken { get; set; } = string.Empty;
+    public static string AccessToken { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Backward-compatibility alias for AuthToken.
+    /// </summary>
+    public static string AuthToken {
+      get => AccessToken;
+      set => AccessToken = value;
+    }
+
+    /// <summary>
+    /// Backward-compatibility property for EndpointUrl.
+    /// </summary>
+    public static string EndpointUrl {
+      get => PrepareRequestUrl(CampaignId);
+      set => CampaignId = value;
+    }
 
     /// <summary>
     /// Whether to include Bronze tier supporters ($5).
@@ -115,7 +130,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
     /// Updates configuration from Mod Settings and triggers an asynchronous refresh.
     /// </summary>
     public static void Configure(
-        string url,
+        string campaignId,
         string token,
         bool bronze,
         bool silver,
@@ -123,8 +138,8 @@ namespace Mods.PatreonBeaverNames.Scripts {
         bool customTiersEnabled,
         string customTiers) {
 
-      EndpointUrl = string.IsNullOrWhiteSpace(url) ? DefaultEndpointUrl : url.Trim();
-      AuthToken = token ?? string.Empty;
+      CampaignId = string.IsNullOrWhiteSpace(campaignId) ? DefaultCampaignId : campaignId.Trim();
+      AccessToken = token ?? string.Empty;
       IncludeBronze = bronze;
       IncludeSilver = silver;
       IncludeGold = gold;
@@ -132,7 +147,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
       CustomTiers = customTiers ?? string.Empty;
 
       ModLogger.LogInfo(
-          $"ApiNameProvider configuration updated: URL='{EndpointUrl}', AuthToken='{(string.IsNullOrEmpty(AuthToken) ? "None" : "***")}', " +
+          $"ApiNameProvider configuration updated: CampaignId='{CampaignId}', AccessToken='{(string.IsNullOrEmpty(AccessToken) ? "None" : "***")}', " +
           $"Bronze={IncludeBronze}, Silver={IncludeSilver}, Gold={IncludeGold}, IncludeCustomTiers={IncludeCustomTiers}, CustomTiersFilter='{CustomTiers}'");
     }
 
@@ -153,9 +168,9 @@ namespace Mods.PatreonBeaverNames.Scripts {
     public static void TriggerFetch() {
       Task.Run(async () => {
         if (Current != null) {
-          await Current.FetchNamesAsync(EndpointUrl);
+          await Current.FetchNamesAsync(CampaignId);
         } else {
-          await FetchNamesStaticAsync(EndpointUrl);
+          await FetchNamesStaticAsync(CampaignId);
         }
       });
     }
@@ -163,15 +178,25 @@ namespace Mods.PatreonBeaverNames.Scripts {
     /// <summary>
     /// Performs a static API fetch for Main Menu previews.
     /// </summary>
-    public static async Task FetchNamesStaticAsync(string url) {
+    public static async Task FetchNamesStaticAsync(string campaignId) {
       try {
-        string queryUrl = PrepareRequestUrl(url);
+        if (string.IsNullOrWhiteSpace(campaignId)) {
+          ModLogger.LogWarning("Campaign ID is missing in Mod Settings.");
+          return;
+        }
+
+        string queryUrl = PrepareRequestUrl(campaignId);
+        if (queryUrl.Contains("patreon.com") && string.IsNullOrWhiteSpace(AccessToken)) {
+          ModLogger.LogWarning("Patreon Creator's Access Token is missing in Mod Settings. Unable to query Patreon API.");
+          return;
+        }
+
         using var request = new HttpRequestMessage(HttpMethod.Get, queryUrl);
         request.Headers.UserAgent.Clear();
         request.Headers.UserAgent.ParseAdd("PatreonBeaverNames-TimberbornMod/1.0");
 
-        if (!string.IsNullOrWhiteSpace(AuthToken)) {
-          request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", AuthToken.Trim());
+        if (!string.IsNullOrWhiteSpace(AccessToken)) {
+          request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", AccessToken.Trim());
         }
 
         HttpResponseMessage response = await HttpClient.SendAsync(request).ConfigureAwait(false);
@@ -257,11 +282,11 @@ namespace Mods.PatreonBeaverNames.Scripts {
         _names.Add(FallbackName);
       }
 
-      ModLogger.LogInfo($"ApiNameProvider initialized. Triggering asynchronous fetch from {EndpointUrl}...");
+      ModLogger.LogInfo($"ApiNameProvider initialized. Triggering asynchronous fetch for CampaignId '{CampaignId}'...");
 
       // Kick off asynchronous fetch on the thread pool so Unity world loading continues smoothly
       Task.Run(async () => {
-        await FetchNamesAsync(EndpointUrl);
+        await FetchNamesAsync(CampaignId);
       });
     }
 
@@ -272,11 +297,23 @@ namespace Mods.PatreonBeaverNames.Scripts {
     /// Performs the HTTP GET request conforming to the Patreon OpenAPI specification.
     /// Handles User-Agent, Bearer authentication, and JSON:API deserialization.
     /// </summary>
-    /// <param name="url">The API endpoint to query.</param>
-    public async Task FetchNamesAsync(string url) {
+    /// <param name="campaignId">Patreon Campaign ID or full URL to query.</param>
+    public async Task FetchNamesAsync(string campaignId) {
       try {
-        // Automatically append query parameters for Patreon API v2 if not already present
-        string queryUrl = PrepareRequestUrl(url);
+        if (string.IsNullOrWhiteSpace(campaignId)) {
+          ModLogger.LogWarning("Campaign ID is missing. Please configure your Patreon Campaign ID in Mod Settings.");
+          MarkLoadedWithFallback();
+          return;
+        }
+
+        // Automatically construct the Patreon API v2 URL
+        string queryUrl = PrepareRequestUrl(campaignId);
+
+        if (queryUrl.Contains("patreon.com") && string.IsNullOrWhiteSpace(AccessToken)) {
+          ModLogger.LogWarning("Patreon Creator's Access Token is missing. Please enter your Creator's Access Token in Mod Settings.");
+          MarkLoadedWithFallback();
+          return;
+        }
 
         using var request = new HttpRequestMessage(HttpMethod.Get, queryUrl);
 
@@ -285,8 +322,8 @@ namespace Mods.PatreonBeaverNames.Scripts {
         request.Headers.UserAgent.ParseAdd("PatreonBeaverNames-TimberbornMod/1.0");
 
         // Attach Authorization header if token is provided
-        if (!string.IsNullOrWhiteSpace(AuthToken)) {
-          request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", AuthToken.Trim());
+        if (!string.IsNullOrWhiteSpace(AccessToken)) {
+          request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", AccessToken.Trim());
         }
 
         HttpResponseMessage response = await HttpClient.SendAsync(request).ConfigureAwait(false);
@@ -342,7 +379,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
         ModLogger.LogWarning($"Patreon API request timed out: {ex.Message}. Falling back to default name.");
         MarkLoadedWithFallback();
       } catch (HttpRequestException ex) {
-        ModLogger.LogWarning($"Patreon API network error connecting to {url}: {ex.Message}. Falling back to default name.");
+        ModLogger.LogWarning($"Patreon API network error connecting for CampaignId '{campaignId}': {ex.Message}. Falling back to default name.");
         MarkLoadedWithFallback();
       } catch (Exception ex) {
         ModLogger.LogError($"Unexpected error while fetching/parsing Patreon API data: {ex}. Falling back to default name.");
@@ -351,19 +388,32 @@ namespace Mods.PatreonBeaverNames.Scripts {
     }
 
     /// <summary>
-    /// Prepares request URL by ensuring standard OpenAPI v2 member query parameters are included.
+    /// Constructs the full Patreon API v2 URL for the specified campaign ID,
+    /// or returns custom/mock URL if provided directly.
     /// </summary>
-    private static string PrepareRequestUrl(string url) {
-      if (string.IsNullOrWhiteSpace(url)) {
-        return DefaultEndpointUrl;
+    private static string PrepareRequestUrl(string campaignId) {
+      if (string.IsNullOrWhiteSpace(campaignId)) {
+        campaignId = DefaultCampaignId;
       }
 
-      // If querying official campaigns endpoint and query string is omitted, append standard includes
-      if (url.Contains("/campaigns/") && !url.Contains("?")) {
-        return $"{url}?include=currently_entitled_tiers&fields[member]=full_name,patron_status,currently_entitled_amount_cents&fields[tier]=title,amount_cents";
+      string trimmed = campaignId.Trim();
+
+      // If user enters a full HTTP/HTTPS URL (e.g. for mock API or local testing), use it directly
+      if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+          trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) {
+        if (!trimmed.Contains("?")) {
+          return $"{trimmed}?include=currently_entitled_tiers&fields[member]=full_name,patron_status,currently_entitled_amount_cents&fields[tier]=title,amount_cents";
+        }
+        return trimmed;
       }
 
-      return url;
+      // If campaign ID is "default", fallback to local mock server URL for testing
+      if (string.Equals(trimmed, "default", StringComparison.OrdinalIgnoreCase)) {
+        return "http://localhost:3000/api/oauth2/v2/campaigns/default/members?include=currently_entitled_tiers&fields[member]=full_name,patron_status,currently_entitled_amount_cents&fields[tier]=title,amount_cents";
+      }
+
+      // Official Patreon API v2 endpoint format per requirement
+      return $"https://www.patreon.com/api/oauth2/v2/campaigns/{trimmed}/members?include=currently_entitled_tiers&fields[member]=full_name,patron_status,currently_entitled_amount_cents&fields[tier]=title,amount_cents";
     }
 
     /// <summary>
