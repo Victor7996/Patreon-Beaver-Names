@@ -182,11 +182,11 @@ namespace Mods.PatreonBeaverNames.Scripts {
     /// </summary>
     public static async Task FetchNamesStaticAsync(string campaignId) {
       try {
-        string resolvedCampaignId = campaignId;
-        if (!string.IsNullOrWhiteSpace(AccessToken) &&
-            !string.Equals(resolvedCampaignId, "default", StringComparison.OrdinalIgnoreCase) &&
-            !resolvedCampaignId.StartsWith("http", StringComparison.OrdinalIgnoreCase)) {
+        string resolvedCampaignId = string.IsNullOrWhiteSpace(campaignId) ? string.Empty : campaignId.Trim();
+        bool campaignIsDefault = string.Equals(resolvedCampaignId, DefaultCampaignId, StringComparison.OrdinalIgnoreCase);
+        bool campaignIsUrl = resolvedCampaignId.StartsWith("http", StringComparison.OrdinalIgnoreCase);
 
+        if (!string.IsNullOrWhiteSpace(AccessToken) && !campaignIsUrl) {
           var discoveredCampaigns = await DiscoverCampaignsAsync(AccessToken).ConfigureAwait(false);
           DiscoveredCampaigns = discoveredCampaigns;
 
@@ -206,7 +206,11 @@ namespace Mods.PatreonBeaverNames.Scripts {
               TiersDiscovered?.Invoke(multiNotice);
               return;
             }
+          } else if (campaignIsDefault || string.IsNullOrWhiteSpace(resolvedCampaignId)) {
+            return;
           }
+        } else if (campaignIsDefault || string.IsNullOrWhiteSpace(resolvedCampaignId)) {
+          return;
         }
 
         if (string.IsNullOrWhiteSpace(resolvedCampaignId)) {
@@ -306,6 +310,18 @@ namespace Mods.PatreonBeaverNames.Scripts {
     public void Load() {
       Current = this;
 
+      // If neither a token nor a real campaign ID has been configured yet,
+      // skip the fetch entirely to avoid adding a [Patreon Pending] placeholder.
+      bool hasToken = !string.IsNullOrWhiteSpace(AccessToken);
+      bool hasCampaign = !string.IsNullOrWhiteSpace(CampaignId) &&
+                         !string.Equals(CampaignId, DefaultCampaignId, StringComparison.OrdinalIgnoreCase);
+
+      if (!hasToken && !hasCampaign) {
+        ModLogger.LogInfo("ApiNameProvider: No Access Token or Campaign ID configured. Skipping Patreon fetch.");
+        IsLoaded = true;
+        return;
+      }
+
       lock (_lock) {
         _names.Clear();
         _names.Add(FallbackName);
@@ -329,18 +345,17 @@ namespace Mods.PatreonBeaverNames.Scripts {
     /// <param name="campaignId">Patreon Campaign ID or full URL to query.</param>
     public async Task FetchNamesAsync(string campaignId) {
       try {
-        if (string.IsNullOrWhiteSpace(campaignId)) {
-          ModLogger.LogWarning("Campaign ID is missing. Please configure your Patreon Campaign ID in Mod Settings.");
-          MarkLoadedWithFallback();
-          return;
-        }
+        // Automatically construct the Patreon API v2 URL, auto-discovering Campaign ID if necessary.
+        // Campaign auto-discovery runs whenever an AccessToken is present, regardless of the campaignId value.
+        // This allows users who have only configured their token to automatically resolve their campaign.
+        string resolvedCampaignId = string.IsNullOrWhiteSpace(campaignId) ? string.Empty : campaignId.Trim();
 
-        // Automatically construct the Patreon API v2 URL, auto-discovering Campaign ID if necessary
-        string resolvedCampaignId = campaignId;
-        if (!string.IsNullOrWhiteSpace(AccessToken) &&
-            !string.Equals(resolvedCampaignId, "default", StringComparison.OrdinalIgnoreCase) &&
-            !resolvedCampaignId.StartsWith("http", StringComparison.OrdinalIgnoreCase)) {
+        bool campaignIsDefault = string.Equals(resolvedCampaignId, DefaultCampaignId, StringComparison.OrdinalIgnoreCase);
+        bool campaignIsUrl = resolvedCampaignId.StartsWith("http", StringComparison.OrdinalIgnoreCase);
 
+        if (!string.IsNullOrWhiteSpace(AccessToken) && !campaignIsUrl) {
+          // Run campaign discovery when a token is present and no explicit URL was provided.
+          // This resolves "default" or missing campaign IDs automatically via /api/oauth2/v2/campaigns.
           var discoveredCampaigns = await DiscoverCampaignsAsync(AccessToken).ConfigureAwait(false);
           DiscoveredCampaigns = discoveredCampaigns;
 
@@ -367,7 +382,17 @@ namespace Mods.PatreonBeaverNames.Scripts {
               MarkLoadedWithFallback();
               return;
             }
+          } else if (campaignIsDefault || string.IsNullOrWhiteSpace(resolvedCampaignId)) {
+            // No campaigns discovered and no real ID was configured — nothing to fetch.
+            ModLogger.LogWarning("Campaign auto-discovery returned no results. Please verify your Creator's Access Token in Mod Settings.");
+            MarkLoadedWithFallback();
+            return;
           }
+        } else if (campaignIsDefault || string.IsNullOrWhiteSpace(resolvedCampaignId)) {
+          // No token and no real campaign ID — silently abort to avoid [Patreon Pending].
+          ModLogger.LogInfo("Patreon fetch skipped: no Access Token or Campaign ID configured.");
+          MarkLoadedWithFallback();
+          return;
         }
 
         string queryUrl = PrepareRequestUrl(resolvedCampaignId);
@@ -545,11 +570,6 @@ namespace Mods.PatreonBeaverNames.Scripts {
           return $"{trimmed}?include=currently_entitled_tiers&fields[member]=full_name,patron_status,currently_entitled_amount_cents&fields[tier]=title,amount_cents";
         }
         return trimmed;
-      }
-
-      // If campaign ID is "default", fallback to local mock server URL for testing
-      if (string.Equals(trimmed, "default", StringComparison.OrdinalIgnoreCase)) {
-        return "http://localhost:3000/api/oauth2/v2/campaigns/default/members?include=currently_entitled_tiers&fields[member]=full_name,patron_status,currently_entitled_amount_cents&fields[tier]=title,amount_cents";
       }
 
       // Official Patreon API v2 endpoint format per requirement
