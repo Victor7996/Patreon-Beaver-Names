@@ -12,8 +12,10 @@ namespace Mods.PatreonBeaverNames.Settings {
   public static class PatreonSettingsApi {
     public static Func<string> GetNames { get; set; }
     public static Action<string> SetNames { get; set; }
+    public static Func<string> GetDiscoveredTiers { get; set; }
+    public static Action<string> OnTiersDiscovered { get; set; }
 
-    public static Action<string, string, bool, bool, bool, string> UpdateApiConfig { get; set; }
+    public static Action<string, string, bool, bool, bool, bool, string> UpdateApiConfig { get; set; }
     public static Action TriggerFetch { get; set; }
   }
 
@@ -36,6 +38,11 @@ namespace Mods.PatreonBeaverNames.Settings {
     public ModSetting<string> AuthTokenSetting { get; }
 
     /// <summary>
+    /// All tiers discovered automatically from the Patreon campaign API response.
+    /// </summary>
+    public ModSetting<string> DiscoveredTiersSetting { get; }
+
+    /// <summary>
     /// Whether to include supporters belonging to the Bronze tier ($5+).
     /// </summary>
     public ModSetting<bool> IncludeBronzeTierSetting { get; }
@@ -51,8 +58,13 @@ namespace Mods.PatreonBeaverNames.Settings {
     public ModSetting<bool> IncludeGoldTierSetting { get; }
 
     /// <summary>
+    /// Whether to include all custom tiers outside the standard Bronze/Silver/Gold tiers (Standard: Yes).
+    /// </summary>
+    public ModSetting<bool> IncludeCustomTiersSetting { get; }
+
+    /// <summary>
     /// Optional comma-separated custom tier titles to match against.
-    /// When set, this overrides the default Bronze/Silver/Gold toggles.
+    /// When set, this restricts to only these specific custom tiers.
     /// </summary>
     public ModSetting<string> CustomTiersSetting { get; }
 
@@ -81,6 +93,13 @@ namespace Mods.PatreonBeaverNames.Settings {
               .SetTooltip("Optional Bearer token sent in the Authorization header. Use to test secure API endpoints.")
       );
 
+      string initialDiscoveredTiers = PatreonSettingsApi.GetDiscoveredTiers?.Invoke();
+      DiscoveredTiersSetting = new ModSetting<string>(
+          string.IsNullOrEmpty(initialDiscoveredTiers) ? "Pending API fetch..." : initialDiscoveredTiers,
+          ModSettingDescriptor.Create("Discovered Campaign Tiers (Auto-detected)")
+              .SetTooltip("Tiers detected automatically from your Patreon campaign API response.")
+      );
+
       IncludeBronzeTierSetting = new ModSetting<bool>(
           true,
           ModSettingDescriptor.Create("Include Bronze Tier ($5)")
@@ -99,10 +118,16 @@ namespace Mods.PatreonBeaverNames.Settings {
               .SetTooltip("Check to include Gold tier Patreon supporters in the beaver name pool.")
       );
 
+      IncludeCustomTiersSetting = new ModSetting<bool>(
+          true,
+          ModSettingDescriptor.Create("Include All Custom Tiers (Standard: Yes)")
+              .SetTooltip("Automatically include supporters from any custom tiers outside Bronze/Silver/Gold.")
+      );
+
       CustomTiersSetting = new ModSetting<string>(
           string.Empty,
           ModSettingDescriptor.Create("Custom Tier Filter (Optional)")
-              .SetTooltip("Optional comma-separated list of custom tier names (e.g. 'Champion, Hero'). Overrides toggles above.")
+              .SetTooltip("Optional comma-separated list of custom tier names (e.g. 'Diamond, Master Architect') to restrict selection.")
       );
 
       string initialText = PatreonSettingsApi.GetNames?.Invoke() ?? string.Empty;
@@ -130,21 +155,31 @@ namespace Mods.PatreonBeaverNames.Settings {
       IncludeBronzeTierSetting.ValueChanged += (_, _) => OnConfigChanged();
       IncludeSilverTierSetting.ValueChanged += (_, _) => OnConfigChanged();
       IncludeGoldTierSetting.ValueChanged += (_, _) => OnConfigChanged();
+      IncludeCustomTiersSetting.ValueChanged += (_, _) => OnConfigChanged();
       CustomTiersSetting.ValueChanged += (_, _) => OnConfigChanged();
 
       NamesSetting.ValueChanged += OnNamesSettingChanged;
 
+      // Register listener for live tier discoveries from ApiNameProvider
+      PatreonSettingsApi.OnTiersDiscovered = OnTiersDiscoveredCallback;
+
       // Push initial stored settings to the mod
       PushSettingsToMod();
 
-      // Synchronize names preview
-      SyncNamesPreview();
+      // Synchronize names and discovered tiers preview
+      SyncPreviews();
+    }
+
+    private void OnTiersDiscoveredCallback(string summary) {
+      if (!string.IsNullOrEmpty(summary) && DiscoveredTiersSetting.Value != summary) {
+        DiscoveredTiersSetting.SetValue(summary);
+      }
     }
 
     private void OnConfigChanged() {
       PushSettingsToMod();
       PatreonSettingsApi.TriggerFetch?.Invoke();
-      SyncNamesPreview();
+      SyncPreviews();
     }
 
     private void PushSettingsToMod() {
@@ -154,14 +189,20 @@ namespace Mods.PatreonBeaverNames.Settings {
           IncludeBronzeTierSetting.Value,
           IncludeSilverTierSetting.Value,
           IncludeGoldTierSetting.Value,
+          IncludeCustomTiersSetting.Value,
           CustomTiersSetting.Value
       );
     }
 
-    private void SyncNamesPreview() {
+    private void SyncPreviews() {
       string currentNames = PatreonSettingsApi.GetNames?.Invoke();
       if (!string.IsNullOrEmpty(currentNames) && NamesSetting.Value != currentNames) {
         NamesSetting.SetValue(currentNames);
+      }
+
+      string currentTiers = PatreonSettingsApi.GetDiscoveredTiers?.Invoke();
+      if (!string.IsNullOrEmpty(currentTiers) && DiscoveredTiersSetting.Value != currentTiers) {
+        DiscoveredTiersSetting.SetValue(currentTiers);
       }
     }
 

@@ -7,8 +7,9 @@
  * - GET /api/patreons (Convenience alias)
  *
  * Features:
- * - 30 supporters distributed across Bronze, Silver, and Gold tiers
+ * - 35 supporters across Bronze, Silver, Gold, and Custom tiers (Diamond, Master Architect)
  * - JSON:API format with "data", "included", and "meta" schemas from openapi.json
+ * - Dynamic tier discovery via "included" resources
  * - Bearer token inspection and optional requirement (?requireAuth=true)
  */
 
@@ -16,9 +17,9 @@ const http = require('http');
 
 const PORT = 3000;
 
-// 30 Patreon supporter names with assigned tiers
+// Supporters across standard and custom tiers
 const SUPPORTERS = [
-  // Bronze Tier ($5) - amount_cents: 500
+  // Bronze Tier ($5)
   { name: "Alice Walker", tier: "Bronze", tierId: "tier-bronze", amount_cents: 500 },
   { name: "Bob Johnson", tier: "Bronze", tierId: "tier-bronze", amount_cents: 500 },
   { name: "Charlie Brown", tier: "Bronze", tierId: "tier-bronze", amount_cents: 500 },
@@ -30,7 +31,7 @@ const SUPPORTERS = [
   { name: "Ivan Petrov", tier: "Bronze", tierId: "tier-bronze", amount_cents: 500 },
   { name: "Julia Roberts", tier: "Bronze", tierId: "tier-bronze", amount_cents: 500 },
 
-  // Silver Tier ($10) - amount_cents: 1000
+  // Silver Tier ($10)
   { name: "Karl Johansson", tier: "Silver", tierId: "tier-silver", amount_cents: 1000 },
   { name: "Lena Nygård", tier: "Silver", tierId: "tier-silver", amount_cents: 1000 },
   { name: "Marcus Aurelius", tier: "Silver", tierId: "tier-silver", amount_cents: 1000 },
@@ -42,7 +43,7 @@ const SUPPORTERS = [
   { name: "Sophia Loren", tier: "Silver", tierId: "tier-silver", amount_cents: 1000 },
   { name: "Thomas Edison", tier: "Silver", tierId: "tier-silver", amount_cents: 1000 },
 
-  // Gold Tier ($25) - amount_cents: 2500
+  // Gold Tier ($25)
   { name: "Uma Thurman", tier: "Gold", tierId: "tier-gold", amount_cents: 2500 },
   { name: "Victor Stone", tier: "Gold", tierId: "tier-gold", amount_cents: 2500 },
   { name: "Wendy Darling", tier: "Gold", tierId: "tier-gold", amount_cents: 2500 },
@@ -52,7 +53,16 @@ const SUPPORTERS = [
   { name: "Arthur Dent", tier: "Gold", tierId: "tier-gold", amount_cents: 2500 },
   { name: "Beatrice Portinari", tier: "Gold", tierId: "tier-gold", amount_cents: 2500 },
   { name: "Cedric Diggory", tier: "Gold", tierId: "tier-gold", amount_cents: 2500 },
-  { name: "Dorothy Gale", tier: "Gold", tierId: "tier-gold", amount_cents: 2500 }
+  { name: "Dorothy Gale", tier: "Gold", tierId: "tier-gold", amount_cents: 2500 },
+
+  // Custom Tier 1: Diamond ($50)
+  { name: "Franklin D. Roosevelt", tier: "Diamond", tierId: "tier-diamond", amount_cents: 5000 },
+  { name: "Grace Hopper", tier: "Diamond", tierId: "tier-diamond", amount_cents: 5000 },
+  { name: "Hedy Lamarr", tier: "Diamond", tierId: "tier-diamond", amount_cents: 5000 },
+
+  // Custom Tier 2: Master Architect ($100)
+  { name: "Leonardo da Vinci", tier: "Master Architect", tierId: "tier-master-architect", amount_cents: 10000 },
+  { name: "Ada Lovelace", tier: "Master Architect", tierId: "tier-master-architect", amount_cents: 10000 }
 ];
 
 // Patreon API v2 JSON:API response payload compliant with openapi.json membersResponse
@@ -98,6 +108,24 @@ const responsePayload = {
         title: "Gold",
         amount_cents: 2500,
         description: "Gold tier supporter"
+      }
+    },
+    {
+      id: "tier-diamond",
+      type: "tier",
+      attributes: {
+        title: "Diamond",
+        amount_cents: 5000,
+        description: "High-roller diamond tier"
+      }
+    },
+    {
+      id: "tier-master-architect",
+      type: "tier",
+      attributes: {
+        title: "Master Architect",
+        amount_cents: 10000,
+        description: "Top-tier supporter"
       }
     }
   ],
@@ -149,7 +177,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Match /api/patreons OR /api/oauth2/v2/campaigns/{campaign_id}/members (as defined in openapi.json)
+  // Match /api/patreons OR /api/oauth2/v2/campaigns/{campaign_id}/members
   const isMembersEndpoint =
     urlObj.pathname === '/api/patreons' ||
     /^\/api\/oauth2\/v2\/campaigns\/[^/]+\/members\/?$/.test(urlObj.pathname);
@@ -170,7 +198,7 @@ const server = http.createServer((req, res) => {
       `Patreon OpenAPI Mock Server is running.\n` +
       `Official OpenAPI Endpoint: http://localhost:${PORT}/api/oauth2/v2/campaigns/default/members\n` +
       `Alias Endpoint:            http://localhost:${PORT}/api/patreons\n` +
-      `Supporters: ${SUPPORTERS.length} (Bronze: 10, Silver: 10, Gold: 10)\n` +
+      `Supporters: ${SUPPORTERS.length} (Bronze, Silver, Gold, Diamond, Master Architect)\n` +
       `Auth header received: ${authHeader ? 'YES (' + authHeader + ')' : 'NONE'}\n`
     );
     return;
@@ -194,6 +222,6 @@ server.listen(PORT, 'localhost', () => {
   console.log(`🚀 Patreon OpenAPI Mock Server running at:`);
   console.log(`   http://localhost:${PORT}/api/oauth2/v2/campaigns/default/members`);
   console.log(`   http://localhost:${PORT}/api/patreons`);
-  console.log(`   Loaded ${SUPPORTERS.length} supporters across Bronze, Silver, Gold tiers.`);
+  console.log(`   Loaded ${SUPPORTERS.length} supporters across Bronze, Silver, Gold, Diamond, Master Architect tiers.`);
   console.log(`===================================================`);
 });

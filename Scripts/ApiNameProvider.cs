@@ -91,6 +91,22 @@ namespace Mods.PatreonBeaverNames.Scripts {
     public static bool IncludeGold { get; set; } = true;
 
     /// <summary>
+    /// Whether to include custom tiers outside the standard Bronze/Silver/Gold tiers.
+    /// Enabled by default ("stöd för custom tiers som standard").
+    /// </summary>
+    public static bool IncludeCustomTiers { get; set; } = true;
+
+    /// <summary>
+    /// Comma-separated summary of all tiers discovered on the Patreon campaign.
+    /// </summary>
+    public static string DiscoveredTiersSummary { get; private set; } = "None detected yet";
+
+    /// <summary>
+    /// Event fired whenever new tiers are discovered during an API fetch.
+    /// </summary>
+    public static event Action<string> TiersDiscovered;
+
+    /// <summary>
     /// Optional custom comma-separated list of tier titles. Overrides boolean tier toggles if set.
     /// </summary>
     public static string CustomTiers { get; set; } = string.Empty;
@@ -104,6 +120,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
         bool bronze,
         bool silver,
         bool gold,
+        bool customTiersEnabled,
         string customTiers) {
 
       EndpointUrl = string.IsNullOrWhiteSpace(url) ? DefaultEndpointUrl : url.Trim();
@@ -111,11 +128,12 @@ namespace Mods.PatreonBeaverNames.Scripts {
       IncludeBronze = bronze;
       IncludeSilver = silver;
       IncludeGold = gold;
+      IncludeCustomTiers = customTiersEnabled;
       CustomTiers = customTiers ?? string.Empty;
 
       ModLogger.LogInfo(
           $"ApiNameProvider configuration updated: URL='{EndpointUrl}', AuthToken='{(string.IsNullOrEmpty(AuthToken) ? "None" : "***")}', " +
-          $"Bronze={IncludeBronze}, Silver={IncludeSilver}, Gold={IncludeGold}, CustomTiers='{CustomTiers}'");
+          $"Bronze={IncludeBronze}, Silver={IncludeSilver}, Gold={IncludeGold}, CustomTiersEnabled={IncludeCustomTiers}, CustomTiersFilter='{CustomTiers}'");
     }
 
     /// <summary>
@@ -238,6 +256,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
             IncludeBronze,
             IncludeSilver,
             IncludeGold,
+            IncludeCustomTiers,
             CustomTiers);
 
         if (parsedNames.Count == 0) {
@@ -255,7 +274,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
         ModLogger.LogInfo(
             $"Successfully fetched and filtered {_names.Count} Patreon supporter name(s) conforming to OpenAPI schema " +
-            $"(Tiers: Bronze={IncludeBronze}, Silver={IncludeSilver}, Gold={IncludeGold}).");
+            $"(Tiers: Bronze={IncludeBronze}, Silver={IncludeSilver}, Gold={IncludeGold}, CustomTiers={IncludeCustomTiers}).");
 
       } catch (TaskCanceledException ex) {
         ModLogger.LogWarning($"Patreon API request timed out: {ex.Message}. Falling back to default name.");
@@ -287,19 +306,22 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
     /// <summary>
     /// Parses a Patreon API v2 JSON:API response conforming to openapi.json.
-    /// Correlates members from the <c>data</c> array with tier metadata from the <c>included</c> array.
+    /// Dynamically discovers all tiers from the campaign (both standard and custom),
+    /// and filters members based on active tier settings.
     /// </summary>
     /// <param name="json">Raw JSON:API string.</param>
     /// <param name="includeBronze">Whether to include Bronze tier ($5).</param>
     /// <param name="includeSilver">Whether to include Silver tier ($10).</param>
     /// <param name="includeGold">Whether to include Gold tier ($25).</param>
-    /// <param name="customTiers">Optional comma-separated custom tier titles.</param>
+    /// <param name="includeCustomTiers">Whether to include custom tiers as standard (default true).</param>
+    /// <param name="customTiers">Optional comma-separated custom tier titles to restrict to.</param>
     /// <returns>List of filtered full names.</returns>
     public static List<string> ParsePatreonNamesFromJson(
         string json,
         bool includeBronze = true,
         bool includeSilver = true,
         bool includeGold = true,
+        bool includeCustomTiers = true,
         string customTiers = "") {
 
       var result = new List<string>();
@@ -318,18 +340,21 @@ namespace Mods.PatreonBeaverNames.Scripts {
           return result;
         }
 
-        // Build lookup map of tier ID -> tier title from the "included" array (Patreon API v2 compound document)
+        // Build lookup map of tier ID -> tier title and amount from the "included" array (Patreon API v2 compound document)
         var tierIdToTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var tierIdToAmount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var allDiscoveredTiers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         if (response.included != null) {
           foreach (PatreonIncluded inc in response.included) {
             if (string.Equals(inc.type, "tier", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(inc.id)) {
               if (inc.attributes != null) {
-                if (!string.IsNullOrEmpty(inc.attributes.title)) {
-                  tierIdToTitle[inc.id] = inc.attributes.title.Trim();
+                string title = inc.attributes.title?.Trim();
+                if (!string.IsNullOrEmpty(title)) {
+                  tierIdToTitle[inc.id] = title;
+                  tierIdToAmount[inc.id] = inc.attributes.amount_cents;
+                  allDiscoveredTiers[title] = inc.attributes.amount_cents;
                 }
-                tierIdToAmount[inc.id] = inc.attributes.amount_cents;
               }
             }
           }
@@ -349,8 +374,9 @@ namespace Mods.PatreonBeaverNames.Scripts {
             continue;
           }
 
-          // Resolve member's tier title
+          // Resolve member's tier title and contribution amount
           string resolvedTier = string.Empty;
+          int memberAmount = member.attributes?.currently_entitled_amount_cents ?? 0;
 
           // 1. Direct tier_title in attributes (convenience or mock field)
           if (!string.IsNullOrEmpty(member.attributes?.tier_title)) {
@@ -361,36 +387,61 @@ namespace Mods.PatreonBeaverNames.Scripts {
             foreach (PatreonResourceIdentifier tierRef in member.relationships.currently_entitled_tiers.data) {
               if (!string.IsNullOrEmpty(tierRef.id) && tierIdToTitle.TryGetValue(tierRef.id, out string title)) {
                 resolvedTier = title;
+                if (tierIdToAmount.TryGetValue(tierRef.id, out int amt) && amt > 0) {
+                  memberAmount = amt;
+                }
                 break;
               }
             }
           }
           // 3. Fallback: match by currently_entitled_amount_cents
-          if (string.IsNullOrEmpty(resolvedTier) && member.attributes != null && member.attributes.currently_entitled_amount_cents > 0) {
-            int cents = member.attributes.currently_entitled_amount_cents;
-            if (cents >= 2500) resolvedTier = "Gold";
-            else if (cents >= 1000) resolvedTier = "Silver";
-            else if (cents >= 500) resolvedTier = "Bronze";
+          if (string.IsNullOrEmpty(resolvedTier) && memberAmount > 0) {
+            if (memberAmount >= 2500) resolvedTier = "Gold";
+            else if (memberAmount >= 1000) resolvedTier = "Silver";
+            else if (memberAmount >= 500) resolvedTier = "Bronze";
+          }
+
+          // Record discovered tier
+          if (!string.IsNullOrEmpty(resolvedTier) && !allDiscoveredTiers.ContainsKey(resolvedTier)) {
+            allDiscoveredTiers[resolvedTier] = memberAmount;
           }
 
           // Filter by tier
           if (customTierSet != null && customTierSet.Count > 0) {
+            // If explicit custom tier filter is specified, only include matching tiers
             if (string.IsNullOrEmpty(resolvedTier) || !customTierSet.Contains(resolvedTier.ToLowerInvariant())) {
               continue;
             }
           } else if (!string.IsNullOrEmpty(resolvedTier)) {
-            if (string.Equals(resolvedTier, "Bronze", StringComparison.OrdinalIgnoreCase) && !includeBronze) {
-              continue;
+            if (string.Equals(resolvedTier, "Bronze", StringComparison.OrdinalIgnoreCase)) {
+              if (!includeBronze) continue;
+            } else if (string.Equals(resolvedTier, "Silver", StringComparison.OrdinalIgnoreCase)) {
+              if (!includeSilver) continue;
+            } else if (string.Equals(resolvedTier, "Gold", StringComparison.OrdinalIgnoreCase)) {
+              if (!includeGold) continue;
+            } else {
+              // Custom tier (e.g. Diamond, Master Architect, etc.)
+              if (!includeCustomTiers) continue;
             }
-            if (string.Equals(resolvedTier, "Silver", StringComparison.OrdinalIgnoreCase) && !includeSilver) {
-              continue;
-            }
-            if (string.Equals(resolvedTier, "Gold", StringComparison.OrdinalIgnoreCase) && !includeGold) {
-              continue;
-            }
+          } else {
+            // Untiered or unknown supporter
+            if (!includeCustomTiers) continue;
           }
 
           result.Add(fullName);
+        }
+
+        // Format discovered tiers summary sorted by contribution amount ascending
+        if (allDiscoveredTiers.Count > 0) {
+          var formattedTiers = allDiscoveredTiers
+              .OrderBy(kvp => kvp.Value)
+              .ThenBy(kvp => kvp.Key)
+              .Select(kvp => kvp.Value > 0 ? $"{kvp.Key} (${kvp.Value / 100})" : kvp.Key)
+              .ToList();
+
+          string summary = string.Join(", ", formattedTiers);
+          DiscoveredTiersSummary = summary;
+          TiersDiscovered?.Invoke(summary);
         }
 
       } catch (Exception ex) {

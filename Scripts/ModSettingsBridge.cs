@@ -71,6 +71,8 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
       var getNamesProp = apiType.GetProperty("GetNames", BindingFlags.Public | BindingFlags.Static);
       var setNamesProp = apiType.GetProperty("SetNames", BindingFlags.Public | BindingFlags.Static);
+      var getDiscoveredTiersProp = apiType.GetProperty("GetDiscoveredTiers", BindingFlags.Public | BindingFlags.Static);
+      var onTiersDiscoveredProp = apiType.GetProperty("OnTiersDiscovered", BindingFlags.Public | BindingFlags.Static);
       var updateConfigProp = apiType.GetProperty("UpdateApiConfig", BindingFlags.Public | BindingFlags.Static);
       var triggerFetchProp = apiType.GetProperty("TriggerFetch", BindingFlags.Public | BindingFlags.Static);
 
@@ -88,12 +90,26 @@ namespace Mods.PatreonBeaverNames.Scripts {
           CsvNameProvider.UpdateNamesFromRawText(raw);
         }));
       }
+      if (getDiscoveredTiersProp != null) {
+        getDiscoveredTiersProp.SetValue(null, new Func<string>(() => ApiNameProvider.DiscoveredTiersSummary));
+      }
       if (updateConfigProp != null) {
-        updateConfigProp.SetValue(null, new Action<string, string, bool, bool, bool, string>(ApiNameProvider.Configure));
+        updateConfigProp.SetValue(null, new Action<string, string, bool, bool, bool, bool, string>(ApiNameProvider.Configure));
       }
       if (triggerFetchProp != null) {
         triggerFetchProp.SetValue(null, new Action(ApiNameProvider.TriggerFetch));
       }
+
+      // Automatically forward runtime discovered tiers to Settings UI
+      ApiNameProvider.TiersDiscovered += (summary) => {
+        try {
+          if (onTiersDiscoveredProp?.GetValue(null) is Action<string> onDiscovered) {
+            onDiscovered(summary);
+          }
+        } catch {
+          // Ignore
+        }
+      };
 
       ModLogger.LogInfo("ModSettings bridge API callbacks successfully bound.");
     }
