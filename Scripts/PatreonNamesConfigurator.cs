@@ -14,7 +14,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
     /// Wires up the mod's dependency graph in the Game context:
     /// <list type="bullet">
     ///   <item><description>
-    ///     <see cref="INameProvider"/> → <see cref="CsvNameProvider"/> (singleton).
+    ///     <see cref="INameProvider"/> → <see cref="ApiNameProvider"/> (singleton).
     ///   </description></item>
     ///   <item><description>
     ///     <see cref="NameManager"/> (singleton) — owns the sequential index and save persistence.
@@ -30,7 +30,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
       ModSettingsBridge.TryInstall(Install);
 
-      Bind<INameProvider>().To<CsvNameProvider>().AsSingleton();
+      Bind<INameProvider>().To<ApiNameProvider>().AsSingleton();
       Bind<NameManager>().AsSingleton();
       Bind<SequentialBeaverNamer>().AsSingleton();
     }

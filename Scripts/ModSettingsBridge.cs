@@ -73,7 +73,12 @@ namespace Mods.PatreonBeaverNames.Scripts {
       var setNamesProp = apiType.GetProperty("SetNames", BindingFlags.Public | BindingFlags.Static);
 
       if (getNamesProp != null) {
-        getNamesProp.SetValue(null, new Func<string>(CsvNameProvider.GetRawNamesText));
+        getNamesProp.SetValue(null, new Func<string>(() => {
+          if (ApiNameProvider.Current != null) {
+            return ApiNameProvider.GetRawNamesText();
+          }
+          return CsvNameProvider.GetRawNamesText();
+        }));
       }
       if (setNamesProp != null) {
         setNamesProp.SetValue(null, new Action<string>(CsvNameProvider.UpdateNamesFromRawText));

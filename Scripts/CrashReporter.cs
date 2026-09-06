@@ -22,7 +22,32 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
     private static readonly object LockObj = new();
     private static readonly HashSet<string> ReportedSignatures = [];
-    private static readonly HttpClient HttpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
+
+    /// <summary>
+    /// Reusable static HttpClient to prevent socket exhaustion.
+    /// In Unity/Mono, a static HttpClient does not automatically honor DNS changes unless
+    /// ConnectionLeaseTimeout and DnsRefreshTimeout are configured on ServicePointManager.
+    /// </summary>
+    private static readonly HttpClient HttpClient;
+
+    static CrashReporter() {
+      // Workaround for Unity / Mono DNS caching issue with static HttpClient:
+      // By setting ConnectionLeaseTimeout, the underlying connection pool closes and recreates
+      // TCP connections periodically (every 60s), triggering fresh DNS lookups while still
+      // reusing sockets across consecutive requests and preventing socket exhaustion.
+      try {
+        var uri = new Uri(WebhookUrl);
+        var sp = System.Net.ServicePointManager.FindServicePoint(uri);
+        sp.ConnectionLeaseTimeout = (int)TimeSpan.FromMinutes(1).TotalMilliseconds;
+        System.Net.ServicePointManager.DnsRefreshTimeout = (int)TimeSpan.FromMinutes(1).TotalMilliseconds;
+      } catch {
+        // Ignored if platform or runtime does not support ServicePointManager
+      }
+
+      HttpClient = new HttpClient {
+        Timeout = TimeSpan.FromSeconds(15)
+      };
+    }
 
     private static int _reportCount;
     private static DateTime _lastReportTime = DateTime.MinValue;

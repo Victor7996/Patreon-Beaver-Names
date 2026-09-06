@@ -25,6 +25,10 @@
       <HintPath>$(TimberbornManagedDir)\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.JSONSerializeModule">
+      <HintPath>$(TimberbornManagedDir)\UnityEngine.JSONSerializeModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Bindito.Core">
       <HintPath>$(TimberbornManagedDir)\Bindito.Core.dll</HintPath>
       <Private>false</Private>
