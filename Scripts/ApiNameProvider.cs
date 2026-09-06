@@ -181,15 +181,29 @@ namespace Mods.PatreonBeaverNames.Scripts {
     public static async Task FetchNamesStaticAsync(string campaignId) {
       try {
         string resolvedCampaignId = campaignId;
-        if ((string.IsNullOrWhiteSpace(resolvedCampaignId) ||
-             string.Equals(resolvedCampaignId, "default", StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(resolvedCampaignId, "auto", StringComparison.OrdinalIgnoreCase)) &&
-            !string.IsNullOrWhiteSpace(AccessToken)) {
+        if (!string.IsNullOrWhiteSpace(AccessToken) &&
+            !string.Equals(resolvedCampaignId, "default", StringComparison.OrdinalIgnoreCase) &&
+            !resolvedCampaignId.StartsWith("http", StringComparison.OrdinalIgnoreCase)) {
 
-          string discoveredId = await AutoDiscoverCampaignIdAsync(AccessToken).ConfigureAwait(false);
-          if (!string.IsNullOrEmpty(discoveredId)) {
-            resolvedCampaignId = discoveredId;
-            CampaignId = discoveredId;
+          var discoveredCampaigns = await DiscoverCampaignsAsync(AccessToken).ConfigureAwait(false);
+          DiscoveredCampaigns = discoveredCampaigns;
+
+          if (discoveredCampaigns.Count == 1) {
+            resolvedCampaignId = discoveredCampaigns[0].Id;
+            CampaignId = resolvedCampaignId;
+          } else if (discoveredCampaigns.Count > 1) {
+            bool matchesSelected = discoveredCampaigns.Any(c => string.Equals(c.Id, campaignId?.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (!matchesSelected) {
+              string multiNotice = "MULTIPLE PATREON CAMPAIGNS DISCOVERED!" + Environment.NewLine +
+                  "Please choose which campaign to use by typing its Campaign ID into 'Patreon Campaign ID':" + Environment.NewLine + Environment.NewLine +
+                  string.Join(Environment.NewLine + Environment.NewLine, discoveredCampaigns.Select((c, idx) =>
+                      $"{idx + 1}. {c.Name} (Campaign ID: {c.Id})" + Environment.NewLine +
+                      $"   Link: {c.Url}"));
+
+              DiscoveredTiersSummary = multiNotice;
+              TiersDiscovered?.Invoke(multiNotice);
+              return;
+            }
           }
         }
 
@@ -321,16 +335,36 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
         // Automatically construct the Patreon API v2 URL, auto-discovering Campaign ID if necessary
         string resolvedCampaignId = campaignId;
-        if ((string.IsNullOrWhiteSpace(resolvedCampaignId) ||
-             string.Equals(resolvedCampaignId, "default", StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(resolvedCampaignId, "auto", StringComparison.OrdinalIgnoreCase)) &&
-            !string.IsNullOrWhiteSpace(AccessToken)) {
+        if (!string.IsNullOrWhiteSpace(AccessToken) &&
+            !string.Equals(resolvedCampaignId, "default", StringComparison.OrdinalIgnoreCase) &&
+            !resolvedCampaignId.StartsWith("http", StringComparison.OrdinalIgnoreCase)) {
 
-          string discoveredId = await AutoDiscoverCampaignIdAsync(AccessToken).ConfigureAwait(false);
-          if (!string.IsNullOrEmpty(discoveredId)) {
-            resolvedCampaignId = discoveredId;
-            CampaignId = discoveredId;
-            // Update DiscoveredTiersSummary or notify UI if campaign ID was auto-discovered
+          var discoveredCampaigns = await DiscoverCampaignsAsync(AccessToken).ConfigureAwait(false);
+          DiscoveredCampaigns = discoveredCampaigns;
+
+          if (discoveredCampaigns.Count == 1) {
+            resolvedCampaignId = discoveredCampaigns[0].Id;
+            CampaignId = resolvedCampaignId;
+            ModLogger.LogInfo($"Single Patreon campaign detected (ID: {resolvedCampaignId}, Name: '{discoveredCampaigns[0].Name}'). Auto-selected.");
+          } else if (discoveredCampaigns.Count > 1) {
+            bool matchesSelected = discoveredCampaigns.Any(c => string.Equals(c.Id, campaignId?.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (!matchesSelected) {
+              string multiNotice = "MULTIPLE PATREON CAMPAIGNS DISCOVERED!" + Environment.NewLine +
+                  "Please choose which campaign to use by typing its Campaign ID into 'Patreon Campaign ID':" + Environment.NewLine + Environment.NewLine +
+                  string.Join(Environment.NewLine + Environment.NewLine, discoveredCampaigns.Select((c, idx) =>
+                      $"{idx + 1}. {c.Name} (Campaign ID: {c.Id})" + Environment.NewLine +
+                      $"   Link: {c.Url}"));
+
+              DiscoveredTiersSummary = multiNotice;
+              TiersDiscovered?.Invoke(multiNotice);
+
+              ModLogger.LogWarning(
+                  $"Multiple Patreon campaigns found ({discoveredCampaigns.Count}). User selection required in Mod Settings:\n" +
+                  string.Join("\n", discoveredCampaigns.Select(c => $" - {c.Name} (ID: {c.Id}): {c.Url}")));
+
+              MarkLoadedWithFallback();
+              return;
+            }
           }
         }
 
@@ -421,44 +455,91 @@ namespace Mods.PatreonBeaverNames.Scripts {
     }
 
     /// <summary>
-    /// Attempts to auto-discover the creator's Campaign ID using the Access Token
-    /// via the Patreon API v2 identity endpoint (/api/oauth2/v2/identity?include=campaign).
+    /// Represents a discovered Patreon campaign owned by the creator.
     /// </summary>
-    private static async Task<string> AutoDiscoverCampaignIdAsync(string token) {
-      if (string.IsNullOrWhiteSpace(token)) return null;
+    public class DiscoveredCampaign {
+      public string Id;
+      public string Name;
+      public string Url;
+    }
+
+    /// <summary>
+    /// List of all campaigns discovered for the current Access Token.
+    /// </summary>
+    public static List<DiscoveredCampaign> DiscoveredCampaigns { get; private set; } = new List<DiscoveredCampaign>();
+
+    /// <summary>
+    /// Fetches all campaigns owned by the user via /api/oauth2/v2/campaigns?fields[campaign]=name,creation_name,url,vanity.
+    /// </summary>
+    public static async Task<List<DiscoveredCampaign>> DiscoverCampaignsAsync(string token) {
+      var campaigns = new List<DiscoveredCampaign>();
+      if (string.IsNullOrWhiteSpace(token)) return campaigns;
 
       try {
-        string identityUrl = "https://www.patreon.com/api/oauth2/v2/identity?include=campaign";
-        using var request = new HttpRequestMessage(HttpMethod.Get, identityUrl);
+        string url = "https://www.patreon.com/api/oauth2/v2/campaigns?fields[campaign]=name,creation_name,url,vanity";
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.UserAgent.Clear();
         request.Headers.UserAgent.ParseAdd("PatreonBeaverNames-TimberbornMod/1.0");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Trim());
 
         HttpResponseMessage response = await HttpClient.SendAsync(request).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode) return null;
+        if (!response.IsSuccessStatusCode) return campaigns;
 
         string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(json)) return null;
+        if (string.IsNullOrWhiteSpace(json)) return campaigns;
 
-        // Parse campaign ID from JSON or Regex
-        var match = System.Text.RegularExpressions.Regex.Match(json, @"""campaign""\s*:\s*\{\s*""data""\s*:\s*\{\s*""id""\s*:\s*""(\d+)""");
-        if (match.Success) {
-          string discoveredId = match.Groups[1].Value;
-          ModLogger.LogInfo($"Auto-discovered Patreon Campaign ID '{discoveredId}' via Creator Access Token!");
-          return discoveredId;
+        try {
+          var resp = JsonUtility.FromJson<PatreonCampaignsResponse>(json);
+          if (resp?.data != null) {
+            foreach (var item in resp.data) {
+              if (item != null && !string.IsNullOrEmpty(item.id)) {
+                string name = item.attributes?.name?.Trim();
+                if (string.IsNullOrEmpty(name)) name = item.attributes?.creation_name?.Trim();
+                if (string.IsNullOrEmpty(name)) name = "Campaign " + item.id;
+
+                string campaignUrl = item.attributes?.url?.Trim();
+                if (string.IsNullOrEmpty(campaignUrl)) {
+                  campaignUrl = !string.IsNullOrEmpty(item.attributes?.vanity)
+                      ? $"https://www.patreon.com/{item.attributes.vanity}"
+                      : $"https://www.patreon.com/campaigns/{item.id}";
+                }
+
+                campaigns.Add(new DiscoveredCampaign {
+                  Id = item.id,
+                  Name = name,
+                  Url = campaignUrl
+                });
+              }
+            }
+          }
+        } catch {
+          // Fallback to regex if JsonUtility fails
         }
 
-        var matchIncluded = System.Text.RegularExpressions.Regex.Match(json, @"""type""\s*:\s*""campaign""\s*,\s*""id""\s*:\s*""(\d+)""|""id""\s*:\s*""(\d+)""\s*,\s*""type""\s*:\s*""campaign""");
-        if (matchIncluded.Success) {
-          string discoveredId = !string.IsNullOrEmpty(matchIncluded.Groups[1].Value) ? matchIncluded.Groups[1].Value : matchIncluded.Groups[2].Value;
-          ModLogger.LogInfo($"Auto-discovered Patreon Campaign ID '{discoveredId}' via Creator Access Token!");
-          return discoveredId;
+        if (campaigns.Count == 0) {
+          var idMatches = System.Text.RegularExpressions.Regex.Matches(json, @"""id""\s*:\s*""(\d+)""");
+          var nameMatches = System.Text.RegularExpressions.Regex.Matches(json, @"""name""\s*:\s*""([^""]+)""");
+          var urlMatches = System.Text.RegularExpressions.Regex.Matches(json, @"""url""\s*:\s*""([^""]+)""");
+
+          for (int i = 0; i < idMatches.Count; i++) {
+            string id = idMatches[i].Groups[1].Value;
+            string name = i < nameMatches.Count ? nameMatches[i].Groups[1].Value : "Campaign " + id;
+            string campaignUrl = i < urlMatches.Count ? urlMatches[i].Groups[1].Value : $"https://www.patreon.com/campaigns/{id}";
+
+            if (!campaigns.Any(c => c.Id == id)) {
+              campaigns.Add(new DiscoveredCampaign {
+                Id = id,
+                Name = name,
+                Url = campaignUrl
+              });
+            }
+          }
         }
       } catch (Exception ex) {
-        ModLogger.LogWarning($"Auto-discovery of Campaign ID failed: {ex.Message}");
+        ModLogger.LogWarning($"Failed to discover campaigns: {ex.Message}");
       }
 
-      return null;
+      return campaigns;
     }
 
     /// <summary>
@@ -862,6 +943,26 @@ namespace Mods.PatreonBeaverNames.Scripts {
     public class PatreonTierAttributes {
       public string title;
       public int amount_cents;
+    }
+
+    [Serializable]
+    public class PatreonCampaignsResponse {
+      public PatreonCampaignData[] data;
+    }
+
+    [Serializable]
+    public class PatreonCampaignData {
+      public string id;
+      public string type;
+      public PatreonCampaignAttributes attributes;
+    }
+
+    [Serializable]
+    public class PatreonCampaignAttributes {
+      public string name;
+      public string creation_name;
+      public string url;
+      public string vanity;
     }
 #pragma warning restore CS0649
 
