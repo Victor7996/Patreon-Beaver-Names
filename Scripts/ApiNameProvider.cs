@@ -11,21 +11,22 @@ using UnityEngine;
 namespace Mods.PatreonBeaverNames.Scripts {
 
   /// <summary>
-  /// Dynamically retrieves and filters a list of beaver names from a Patreon REST API endpoint
-  /// adhering to the Patreon API v2 response schema.
+  /// Dynamically retrieves and filters a list of beaver names from a Patreon REST API v2 endpoint
+  /// strictly adhering to the Patreon OpenAPI 3.1 schema (<c>openapi.json</c>).
   /// </summary>
   /// <remarks>
   /// Implements <see cref="INameProvider"/> to dispense names to beavers and
   /// <see cref="ILoadableSingleton"/> to initialize upon world/save load.
-  /// Supports authentication tokens (Bearer), tier filtering (Bronze, Silver, Gold, or custom),
-  /// and executes network requests asynchronously to avoid freezing the Unity main thread.
+  /// Supports OpenAPI v2 endpoints (<c>/api/oauth2/v2/campaigns/{campaign_id}/members</c>),
+  /// JSON:API compound documents with included tiers, Bearer token authentication,
+  /// and tier filtering (Bronze, Silver, Gold, or custom tier titles).
   /// </remarks>
   public class ApiNameProvider : INameProvider, ILoadableSingleton {
 
     /// <summary>
-    /// Default mock endpoint URL serving Patreon member data.
+    /// Default OpenAPI v2 endpoint URL matching the schema in openapi.json.
     /// </summary>
-    public const string DefaultEndpointUrl = "http://localhost:3000/api/patreons";
+    public const string DefaultEndpointUrl = "http://localhost:3000/api/oauth2/v2/campaigns/default/members";
 
     /// <summary>
     /// Fallback placeholder dispensed when names are still loading or if the network request fails,
@@ -52,7 +53,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
       }
 
       HttpClient = new HttpClient {
-        Timeout = TimeSpan.FromSeconds(10)
+        Timeout = TimeSpan.FromSeconds(15)
       };
     }
 
@@ -70,22 +71,22 @@ namespace Mods.PatreonBeaverNames.Scripts {
     public static string EndpointUrl { get; set; } = DefaultEndpointUrl;
 
     /// <summary>
-    /// Optional Bearer authentication token for testing secured endpoints.
+    /// Optional Bearer authentication token for authenticating with Patreon API.
     /// </summary>
     public static string AuthToken { get; set; } = string.Empty;
 
     /// <summary>
-    /// Whether to include Bronze tier supporters.
+    /// Whether to include Bronze tier supporters ($5).
     /// </summary>
     public static bool IncludeBronze { get; set; } = true;
 
     /// <summary>
-    /// Whether to include Silver tier supporters.
+    /// Whether to include Silver tier supporters ($10).
     /// </summary>
     public static bool IncludeSilver { get; set; } = true;
 
     /// <summary>
-    /// Whether to include Gold tier supporters.
+    /// Whether to include Gold tier supporters ($25).
     /// </summary>
     public static bool IncludeGold { get; set; } = true;
 
@@ -196,13 +197,20 @@ namespace Mods.PatreonBeaverNames.Scripts {
     // Network & Parsing
 
     /// <summary>
-    /// Performs the HTTP GET request with optional Bearer authentication and deserializes
-    /// the Patreon API v2 payload, filtering results according to tier settings.
+    /// Performs the HTTP GET request conforming to the Patreon OpenAPI specification.
+    /// Handles User-Agent, Bearer authentication, and JSON:API deserialization.
     /// </summary>
     /// <param name="url">The API endpoint to query.</param>
     public async Task FetchNamesAsync(string url) {
       try {
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        // Automatically append query parameters for Patreon API v2 if not already present
+        string queryUrl = PrepareRequestUrl(url);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, queryUrl);
+
+        // Required User-Agent per openapi.json components/parameters/userAgent
+        request.Headers.UserAgent.Clear();
+        request.Headers.UserAgent.ParseAdd("PatreonBeaverNames-TimberbornMod/1.0");
 
         // Attach Authorization header if token is provided
         if (!string.IsNullOrWhiteSpace(AuthToken)) {
@@ -213,14 +221,14 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
         if (!response.IsSuccessStatusCode) {
           ModLogger.LogWarning(
-              $"Patreon API request to {url} failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase}). Using fallback name.");
+              $"Patreon API request to {queryUrl} failed with HTTP {(int)response.StatusCode} ({response.ReasonPhrase}). Using fallback name.");
           MarkLoadedWithFallback();
           return;
         }
 
         string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(json)) {
-          ModLogger.LogWarning($"Patreon API returned empty response from {url}. Using fallback name.");
+          ModLogger.LogWarning($"Patreon API returned empty response from {queryUrl}. Using fallback name.");
           MarkLoadedWithFallback();
           return;
         }
@@ -234,7 +242,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
         if (parsedNames.Count == 0) {
           ModLogger.LogWarning(
-              $"No supporter names matched the active tier filter criteria. Using fallback name.");
+              $"No supporter names matched the active tier filter criteria from API response. Using fallback name.");
           MarkLoadedWithFallback();
           return;
         }
@@ -246,7 +254,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
         }
 
         ModLogger.LogInfo(
-            $"Successfully fetched and filtered {_names.Count} Patreon supporter name(s) from API " +
+            $"Successfully fetched and filtered {_names.Count} Patreon supporter name(s) conforming to OpenAPI schema " +
             $"(Tiers: Bronze={IncludeBronze}, Silver={IncludeSilver}, Gold={IncludeGold}).");
 
       } catch (TaskCanceledException ex) {
@@ -262,15 +270,31 @@ namespace Mods.PatreonBeaverNames.Scripts {
     }
 
     /// <summary>
-    /// Parses Patreon API v2 JSON response using Unity's built-in <see cref="JsonUtility"/>
-    /// and filters supporters based on tier selections.
+    /// Prepares request URL by ensuring standard OpenAPI v2 member query parameters are included.
     /// </summary>
-    /// <param name="json">Raw JSON string from the API response.</param>
-    /// <param name="includeBronze">Whether to include Bronze tier supporters.</param>
-    /// <param name="includeSilver">Whether to include Silver tier supporters.</param>
-    /// <param name="includeGold">Whether to include Gold tier supporters.</param>
+    private static string PrepareRequestUrl(string url) {
+      if (string.IsNullOrWhiteSpace(url)) {
+        return DefaultEndpointUrl;
+      }
+
+      // If querying official campaigns endpoint and query string is omitted, append standard includes
+      if (url.Contains("/campaigns/") && !url.Contains("?")) {
+        return $"{url}?include=currently_entitled_tiers&fields[member]=full_name,patron_status,currently_entitled_amount_cents&fields[tier]=title,amount_cents";
+      }
+
+      return url;
+    }
+
+    /// <summary>
+    /// Parses a Patreon API v2 JSON:API response conforming to openapi.json.
+    /// Correlates members from the <c>data</c> array with tier metadata from the <c>included</c> array.
+    /// </summary>
+    /// <param name="json">Raw JSON:API string.</param>
+    /// <param name="includeBronze">Whether to include Bronze tier ($5).</param>
+    /// <param name="includeSilver">Whether to include Silver tier ($10).</param>
+    /// <param name="includeGold">Whether to include Gold tier ($25).</param>
     /// <param name="customTiers">Optional comma-separated custom tier titles.</param>
-    /// <returns>List of valid, non-empty, filtered full names.</returns>
+    /// <returns>List of filtered full names.</returns>
     public static List<string> ParsePatreonNamesFromJson(
         string json,
         bool includeBronze = true,
@@ -290,37 +314,87 @@ namespace Mods.PatreonBeaverNames.Scripts {
       try {
         PatreonApiResponse response = JsonUtility.FromJson<PatreonApiResponse>(json);
 
-        if (response?.data != null) {
-          foreach (PatreonData item in response.data) {
-            string fullName = item?.attributes?.full_name?.Trim();
-            if (string.IsNullOrEmpty(fullName)) {
-              continue;
-            }
+        if (response?.data == null || response.data.Count == 0) {
+          return result;
+        }
 
-            string tier = item?.attributes?.tier_title?.Trim() ?? string.Empty;
+        // Build lookup map of tier ID -> tier title from the "included" array (Patreon API v2 compound document)
+        var tierIdToTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var tierIdToAmount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-            // Tier filtering
-            if (customTierSet != null && customTierSet.Count > 0) {
-              if (string.IsNullOrEmpty(tier) || !customTierSet.Contains(tier.ToLowerInvariant())) {
-                continue;
-              }
-            } else if (!string.IsNullOrEmpty(tier)) {
-              if (string.Equals(tier, "Bronze", StringComparison.OrdinalIgnoreCase) && !includeBronze) {
-                continue;
-              }
-              if (string.Equals(tier, "Silver", StringComparison.OrdinalIgnoreCase) && !includeSilver) {
-                continue;
-              }
-              if (string.Equals(tier, "Gold", StringComparison.OrdinalIgnoreCase) && !includeGold) {
-                continue;
+        if (response.included != null) {
+          foreach (PatreonIncluded inc in response.included) {
+            if (string.Equals(inc.type, "tier", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(inc.id)) {
+              if (inc.attributes != null) {
+                if (!string.IsNullOrEmpty(inc.attributes.title)) {
+                  tierIdToTitle[inc.id] = inc.attributes.title.Trim();
+                }
+                tierIdToAmount[inc.id] = inc.attributes.amount_cents;
               }
             }
-
-            result.Add(fullName);
           }
         }
+
+        foreach (PatreonMember member in response.data) {
+          string fullName = member.attributes?.full_name?.Trim();
+          if (string.IsNullOrEmpty(fullName)) {
+            continue;
+          }
+
+          // Per openapi.json member schema, patron_status can be: "active_patron", "declined_patron", "former_patron"
+          string patronStatus = member.attributes?.patron_status;
+          if (!string.IsNullOrEmpty(patronStatus) &&
+              !string.Equals(patronStatus, "active_patron", StringComparison.OrdinalIgnoreCase)) {
+            // Ignore non-active patrons (declined or former)
+            continue;
+          }
+
+          // Resolve member's tier title
+          string resolvedTier = string.Empty;
+
+          // 1. Direct tier_title in attributes (convenience or mock field)
+          if (!string.IsNullOrEmpty(member.attributes?.tier_title)) {
+            resolvedTier = member.attributes.tier_title.Trim();
+          }
+          // 2. Correlate through relationships.currently_entitled_tiers -> included tier
+          else if (member.relationships?.currently_entitled_tiers?.data != null) {
+            foreach (PatreonResourceIdentifier tierRef in member.relationships.currently_entitled_tiers.data) {
+              if (!string.IsNullOrEmpty(tierRef.id) && tierIdToTitle.TryGetValue(tierRef.id, out string title)) {
+                resolvedTier = title;
+                break;
+              }
+            }
+          }
+          // 3. Fallback: match by currently_entitled_amount_cents
+          if (string.IsNullOrEmpty(resolvedTier) && member.attributes != null && member.attributes.currently_entitled_amount_cents > 0) {
+            int cents = member.attributes.currently_entitled_amount_cents;
+            if (cents >= 2500) resolvedTier = "Gold";
+            else if (cents >= 1000) resolvedTier = "Silver";
+            else if (cents >= 500) resolvedTier = "Bronze";
+          }
+
+          // Filter by tier
+          if (customTierSet != null && customTierSet.Count > 0) {
+            if (string.IsNullOrEmpty(resolvedTier) || !customTierSet.Contains(resolvedTier.ToLowerInvariant())) {
+              continue;
+            }
+          } else if (!string.IsNullOrEmpty(resolvedTier)) {
+            if (string.Equals(resolvedTier, "Bronze", StringComparison.OrdinalIgnoreCase) && !includeBronze) {
+              continue;
+            }
+            if (string.Equals(resolvedTier, "Silver", StringComparison.OrdinalIgnoreCase) && !includeSilver) {
+              continue;
+            }
+            if (string.Equals(resolvedTier, "Gold", StringComparison.OrdinalIgnoreCase) && !includeGold) {
+              continue;
+            }
+          }
+
+          result.Add(fullName);
+        }
+
       } catch (Exception ex) {
-        ModLogger.LogError($"JsonUtility failed to parse Patreon API response: {ex.Message}");
+        ModLogger.LogError($"JsonUtility failed to parse OpenAPI Patreon response: {ex.Message}");
       }
 
       return result;
@@ -376,23 +450,58 @@ namespace Mods.PatreonBeaverNames.Scripts {
     }
 
     // -------------------------------------------------------------------------
-    // Patreon API v2 Data Transfer Objects (DTOs) for JsonUtility
+    // OpenAPI 3.1 / Patreon API v2 JSON:API Data Transfer Objects for JsonUtility
 
 #pragma warning disable CS0649
     [Serializable]
     private class PatreonApiResponse {
-      public List<PatreonData> data;
+      public List<PatreonMember> data;
+      public List<PatreonIncluded> included;
     }
 
     [Serializable]
-    private class PatreonData {
-      public PatreonAttributes attributes;
+    private class PatreonMember {
+      public string id;
+      public string type;
+      public PatreonMemberAttributes attributes;
+      public PatreonMemberRelationships relationships;
     }
 
     [Serializable]
-    private class PatreonAttributes {
+    private class PatreonMemberAttributes {
       public string full_name;
+      public string patron_status;
+      public int currently_entitled_amount_cents;
       public string tier_title;
+    }
+
+    [Serializable]
+    private class PatreonMemberRelationships {
+      public PatreonTierRelationship currently_entitled_tiers;
+    }
+
+    [Serializable]
+    private class PatreonTierRelationship {
+      public List<PatreonResourceIdentifier> data;
+    }
+
+    [Serializable]
+    private class PatreonResourceIdentifier {
+      public string id;
+      public string type;
+    }
+
+    [Serializable]
+    private class PatreonIncluded {
+      public string id;
+      public string type;
+      public PatreonTierAttributes attributes;
+    }
+
+    [Serializable]
+    private class PatreonTierAttributes {
+      public string title;
+      public int amount_cents;
     }
 #pragma warning restore CS0649
 
