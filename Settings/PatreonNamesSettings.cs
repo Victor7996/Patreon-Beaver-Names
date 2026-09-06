@@ -15,7 +15,7 @@ namespace Mods.PatreonBeaverNames.Settings {
     public static Func<string> GetDiscoveredTiers { get; set; }
     public static Action<string> OnTiersDiscovered { get; set; }
 
-    public static Action<string, string, bool, bool, bool, bool, bool, bool, string> UpdateApiConfig { get; set; }
+    public static Action<string, string, bool, bool, bool, bool, string> UpdateApiConfig { get; set; }
     public static Action TriggerFetch { get; set; }
   }
 
@@ -58,19 +58,10 @@ namespace Mods.PatreonBeaverNames.Settings {
     public ModSetting<bool> IncludeGoldTierSetting { get; }
 
     /// <summary>
-    /// Whether to include supporters belonging to the Diamond tier ($50+).
+    /// Whether to include all custom tiers outside standard Bronze/Silver/Gold (Standard: Yes).
+    /// Enables dynamic support for any custom Patreon campaign tiers.
     /// </summary>
-    public ModSetting<bool> IncludeDiamondTierSetting { get; }
-
-    /// <summary>
-    /// Whether to include supporters belonging to the Master Architect tier ($100+).
-    /// </summary>
-    public ModSetting<bool> IncludeMasterArchitectTierSetting { get; }
-
-    /// <summary>
-    /// Whether to include supporters belonging to any other unlisted custom tiers.
-    /// </summary>
-    public ModSetting<bool> IncludeOtherCustomTiersSetting { get; }
+    public ModSetting<bool> IncludeCustomTiersSetting { get; }
 
     /// <summary>
     /// Optional comma-separated custom tier titles to match against.
@@ -128,28 +119,16 @@ namespace Mods.PatreonBeaverNames.Settings {
               .SetTooltip("Check to include Gold tier Patreon supporters in the beaver name pool.")
       );
 
-      IncludeDiamondTierSetting = new ModSetting<bool>(
+      IncludeCustomTiersSetting = new ModSetting<bool>(
           true,
-          ModSettingDescriptor.Create("Include Diamond Tier ($50)")
-              .SetTooltip("Check to include Diamond tier Patreon supporters in the beaver name pool.")
-      );
-
-      IncludeMasterArchitectTierSetting = new ModSetting<bool>(
-          true,
-          ModSettingDescriptor.Create("Include Master Architect Tier ($100)")
-              .SetTooltip("Check to include Master Architect tier Patreon supporters in the beaver name pool.")
-      );
-
-      IncludeOtherCustomTiersSetting = new ModSetting<bool>(
-          true,
-          ModSettingDescriptor.Create("Include Other Unlisted Custom Tiers")
-              .SetTooltip("Check to include supporters from any unlisted custom tiers outside Bronze/Silver/Gold/Diamond/Master Architect.")
+          ModSettingDescriptor.Create("Include All Custom Tiers (Standard: Yes)")
+              .SetTooltip("Automatically include supporters from any custom campaign tiers outside Bronze/Silver/Gold.")
       );
 
       CustomTiersSetting = new ModSetting<string>(
           string.Empty,
           ModSettingDescriptor.Create("Custom Tier Filter (Optional)")
-              .SetTooltip("Optional comma-separated list of custom tier names to restrict selection.")
+              .SetTooltip("Optional comma-separated list of custom tier names (e.g. 'Diamond, VIP') to restrict selection.")
       );
 
       string initialText = PatreonSettingsApi.GetNames?.Invoke() ?? string.Empty;
@@ -177,9 +156,7 @@ namespace Mods.PatreonBeaverNames.Settings {
       IncludeBronzeTierSetting.ValueChanged += (_, _) => OnConfigChanged();
       IncludeSilverTierSetting.ValueChanged += (_, _) => OnConfigChanged();
       IncludeGoldTierSetting.ValueChanged += (_, _) => OnConfigChanged();
-      IncludeDiamondTierSetting.ValueChanged += (_, _) => OnConfigChanged();
-      IncludeMasterArchitectTierSetting.ValueChanged += (_, _) => OnConfigChanged();
-      IncludeOtherCustomTiersSetting.ValueChanged += (_, _) => OnConfigChanged();
+      IncludeCustomTiersSetting.ValueChanged += (_, _) => OnConfigChanged();
       CustomTiersSetting.ValueChanged += (_, _) => OnConfigChanged();
 
       NamesSetting.ValueChanged += OnNamesSettingChanged;
@@ -213,9 +190,7 @@ namespace Mods.PatreonBeaverNames.Settings {
           IncludeBronzeTierSetting.Value,
           IncludeSilverTierSetting.Value,
           IncludeGoldTierSetting.Value,
-          IncludeDiamondTierSetting.Value,
-          IncludeMasterArchitectTierSetting.Value,
-          IncludeOtherCustomTiersSetting.Value,
+          IncludeCustomTiersSetting.Value,
           CustomTiersSetting.Value
       );
     }

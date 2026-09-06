@@ -94,7 +94,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
         getDiscoveredTiersProp.SetValue(null, new Func<string>(() => ApiNameProvider.DiscoveredTiersSummary));
       }
       if (updateConfigProp != null) {
-        updateConfigProp.SetValue(null, new Action<string, string, bool, bool, bool, bool, bool, bool, string>(ApiNameProvider.Configure));
+        updateConfigProp.SetValue(null, new Action<string, string, bool, bool, bool, bool, string>(ApiNameProvider.Configure));
       }
       if (triggerFetchProp != null) {
         triggerFetchProp.SetValue(null, new Action(ApiNameProvider.TriggerFetch));
