@@ -332,108 +332,218 @@ namespace Mods.PatreonBeaverNames.Scripts {
             customTiers.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
                        .Select(t => t.Trim().ToLowerInvariant()));
       }
-
       try {
         PatreonApiResponse response = JsonUtility.FromJson<PatreonApiResponse>(json);
 
-        if (response?.data == null || response.data.Count == 0) {
-          return result;
-        }
+        if (response?.data != null && response.data.Length > 0) {
+          // Build lookup map of tier ID -> tier title and amount from the "included" array (Patreon API v2 compound document)
+          var tierIdToTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var tierIdToAmount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+          var allDiscoveredTiers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-        // Build lookup map of tier ID -> tier title and amount from the "included" array (Patreon API v2 compound document)
-        var tierIdToTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var tierIdToAmount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var allDiscoveredTiers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
-        if (response.included != null) {
-          foreach (PatreonIncluded inc in response.included) {
-            if (string.Equals(inc.type, "tier", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(inc.id)) {
-              if (inc.attributes != null) {
-                string title = inc.attributes.title?.Trim();
-                if (!string.IsNullOrEmpty(title)) {
-                  tierIdToTitle[inc.id] = title;
-                  tierIdToAmount[inc.id] = inc.attributes.amount_cents;
-                  allDiscoveredTiers[title] = inc.attributes.amount_cents;
+          if (response.included != null) {
+            foreach (PatreonIncluded inc in response.included) {
+              if (inc != null && string.Equals(inc.type, "tier", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(inc.id)) {
+                if (inc.attributes != null) {
+                  string title = inc.attributes.title?.Trim();
+                  if (!string.IsNullOrEmpty(title)) {
+                    tierIdToTitle[inc.id] = title;
+                    tierIdToAmount[inc.id] = inc.attributes.amount_cents;
+                    allDiscoveredTiers[title] = inc.attributes.amount_cents;
+                  }
                 }
               }
             }
           }
-        }
 
-        foreach (PatreonMember member in response.data) {
-          string fullName = member.attributes?.full_name?.Trim();
-          if (string.IsNullOrEmpty(fullName)) {
-            continue;
-          }
+          foreach (PatreonMember member in response.data) {
+            if (member == null) continue;
 
-          // Per openapi.json member schema, patron_status can be: "active_patron", "declined_patron", "former_patron"
-          string patronStatus = member.attributes?.patron_status;
-          if (!string.IsNullOrEmpty(patronStatus) &&
-              !string.Equals(patronStatus, "active_patron", StringComparison.OrdinalIgnoreCase)) {
-            // Ignore non-active patrons (declined or former)
-            continue;
-          }
-
-          // Resolve member's tier title and contribution amount
-          string resolvedTier = string.Empty;
-          int memberAmount = member.attributes?.currently_entitled_amount_cents ?? 0;
-
-          // 1. Direct tier_title in attributes (convenience or mock field)
-          if (!string.IsNullOrEmpty(member.attributes?.tier_title)) {
-            resolvedTier = member.attributes.tier_title.Trim();
-          }
-          // 2. Correlate through relationships.currently_entitled_tiers -> included tier
-          else if (member.relationships?.currently_entitled_tiers?.data != null) {
-            foreach (PatreonResourceIdentifier tierRef in member.relationships.currently_entitled_tiers.data) {
-              if (!string.IsNullOrEmpty(tierRef.id) && tierIdToTitle.TryGetValue(tierRef.id, out string title)) {
-                resolvedTier = title;
-                if (tierIdToAmount.TryGetValue(tierRef.id, out int amt) && amt > 0) {
-                  memberAmount = amt;
-                }
-                break;
-              }
-            }
-          }
-          // 3. Fallback: match by currently_entitled_amount_cents
-          if (string.IsNullOrEmpty(resolvedTier) && memberAmount > 0) {
-            if (memberAmount >= 2500) resolvedTier = "Gold";
-            else if (memberAmount >= 1000) resolvedTier = "Silver";
-            else if (memberAmount >= 500) resolvedTier = "Bronze";
-          }
-
-          // Record discovered tier
-          if (!string.IsNullOrEmpty(resolvedTier) && !allDiscoveredTiers.ContainsKey(resolvedTier)) {
-            allDiscoveredTiers[resolvedTier] = memberAmount;
-          }
-
-          // Filter by tier
-          if (customTierSet != null && customTierSet.Count > 0) {
-            // If explicit custom tier filter is specified, only include matching tiers
-            if (string.IsNullOrEmpty(resolvedTier) || !customTierSet.Contains(resolvedTier.ToLowerInvariant())) {
+            string fullName = member.attributes?.full_name?.Trim();
+            if (string.IsNullOrEmpty(fullName)) {
               continue;
             }
-          } else if (!string.IsNullOrEmpty(resolvedTier)) {
-            if (string.Equals(resolvedTier, "Bronze", StringComparison.OrdinalIgnoreCase)) {
-              if (!includeBronze) continue;
-            } else if (string.Equals(resolvedTier, "Silver", StringComparison.OrdinalIgnoreCase)) {
-              if (!includeSilver) continue;
-            } else if (string.Equals(resolvedTier, "Gold", StringComparison.OrdinalIgnoreCase)) {
-              if (!includeGold) continue;
+
+            // Per openapi.json member schema, patron_status can be: "active_patron", "declined_patron", "former_patron"
+            string patronStatus = member.attributes?.patron_status;
+            if (!string.IsNullOrEmpty(patronStatus) &&
+                !string.Equals(patronStatus, "active_patron", StringComparison.OrdinalIgnoreCase)) {
+              // Ignore non-active patrons (declined or former)
+              continue;
+            }
+
+            // Resolve member's tier title and contribution amount
+            string resolvedTier = string.Empty;
+            int memberAmount = member.attributes?.currently_entitled_amount_cents ?? 0;
+
+            // 1. Direct tier_title in attributes (convenience or mock field)
+            if (!string.IsNullOrEmpty(member.attributes?.tier_title)) {
+              resolvedTier = member.attributes.tier_title.Trim();
+            }
+            // 2. Correlate through relationships.currently_entitled_tiers -> included tier
+            else if (member.relationships?.currently_entitled_tiers?.data != null) {
+              foreach (PatreonResourceIdentifier tierRef in member.relationships.currently_entitled_tiers.data) {
+                if (tierRef != null && !string.IsNullOrEmpty(tierRef.id) && tierIdToTitle.TryGetValue(tierRef.id, out string title)) {
+                  resolvedTier = title;
+                  if (tierIdToAmount.TryGetValue(tierRef.id, out int amt) && amt > 0) {
+                    memberAmount = amt;
+                  }
+                  break;
+                }
+              }
+            }
+            // 3. Fallback: match by currently_entitled_amount_cents
+            if (string.IsNullOrEmpty(resolvedTier) && memberAmount > 0) {
+              if (memberAmount >= 2500) resolvedTier = "Gold";
+              else if (memberAmount >= 1000) resolvedTier = "Silver";
+              else if (memberAmount >= 500) resolvedTier = "Bronze";
+            }
+
+            // Record discovered tier
+            if (!string.IsNullOrEmpty(resolvedTier) && !allDiscoveredTiers.ContainsKey(resolvedTier)) {
+              allDiscoveredTiers[resolvedTier] = memberAmount;
+            }
+
+            // Filter by tier
+            if (customTierSet != null && customTierSet.Count > 0) {
+              if (string.IsNullOrEmpty(resolvedTier) || !customTierSet.Contains(resolvedTier.ToLowerInvariant())) {
+                continue;
+              }
+            } else if (!string.IsNullOrEmpty(resolvedTier)) {
+              if (string.Equals(resolvedTier, "Bronze", StringComparison.OrdinalIgnoreCase)) {
+                if (!includeBronze) continue;
+              } else if (string.Equals(resolvedTier, "Silver", StringComparison.OrdinalIgnoreCase)) {
+                if (!includeSilver) continue;
+              } else if (string.Equals(resolvedTier, "Gold", StringComparison.OrdinalIgnoreCase)) {
+                if (!includeGold) continue;
+              } else {
+                if (!includeCustomTiers) continue;
+              }
             } else {
-              // Custom tier (e.g. Diamond, Master Architect, etc.)
               if (!includeCustomTiers) continue;
             }
-          } else {
-            // Untiered or unknown supporter
-            if (!includeCustomTiers) continue;
+
+            result.Add(fullName);
           }
 
-          result.Add(fullName);
+          // Format discovered tiers summary sorted by contribution amount ascending
+          if (allDiscoveredTiers.Count > 0) {
+            var formattedTiers = allDiscoveredTiers
+                .OrderBy(kvp => kvp.Value)
+                .ThenBy(kvp => kvp.Key)
+                .Select(kvp => kvp.Value > 0 ? $"{kvp.Key} (${kvp.Value / 100})" : kvp.Key)
+                .ToList();
+
+            string summary = string.Join(", ", formattedTiers);
+            DiscoveredTiersSummary = summary;
+            TiersDiscovered?.Invoke(summary);
+          }
+        } else {
+          // Robust regex fallback parser if JsonUtility returns empty array
+          result = ParsePatreonNamesWithRegexFallback(
+              json,
+              includeBronze,
+              includeSilver,
+              includeGold,
+              includeCustomTiers,
+              customTierSet);
         }
 
-        // Format discovered tiers summary sorted by contribution amount ascending
-        if (allDiscoveredTiers.Count > 0) {
-          var formattedTiers = allDiscoveredTiers
+      } catch (Exception ex) {
+        ModLogger.LogError($"JsonUtility failed to parse OpenAPI Patreon response: {ex.Message}. Attempting fallback regex parser...");
+        result = ParsePatreonNamesWithRegexFallback(
+            json,
+            includeBronze,
+            includeSilver,
+            includeGold,
+            includeCustomTiers,
+            customTierSet);
+      }
+
+      return result;
+    }
+
+    /// <summary>
+    /// Robust regex fallback parser when JsonUtility fails or returns empty payload in non-standard environments.
+    /// </summary>
+    private static List<string> ParsePatreonNamesWithRegexFallback(
+        string json,
+        bool includeBronze,
+        bool includeSilver,
+        bool includeGold,
+        bool includeCustomTiers,
+        HashSet<string> customTierSet) {
+
+      var result = new List<string>();
+      var discoveredTiers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+      try {
+        // Extract full_name and tier_title / amount_cents via regular expressions
+        var memberMatches = System.Text.RegularExpressions.Regex.Matches(
+            json,
+            @"""full_name""\s*:\s*""([^""]+)""");
+
+        var tierTitleMatches = System.Text.RegularExpressions.Regex.Matches(
+            json,
+            @"""tier_title""\s*:\s*""([^""]+)""");
+
+        // Extract title and amount_cents blocks dynamically
+        var tierBlockMatches = System.Text.RegularExpressions.Regex.Matches(
+            json,
+            @"""title""\s*:\s*""([^""]+)""[^}]*?""amount_cents""\s*:\s*(\d+)");
+
+        foreach (System.Text.RegularExpressions.Match match in tierBlockMatches) {
+          string t = match.Groups[1].Value.Trim();
+          if (!string.IsNullOrEmpty(t) && !string.Equals(t, "member", StringComparison.OrdinalIgnoreCase)) {
+            if (int.TryParse(match.Groups[2].Value, out int cents)) {
+              discoveredTiers[t] = cents;
+            }
+          }
+        }
+
+        // Fallback for simple title matches if block matching didn't catch any
+        if (discoveredTiers.Count == 0) {
+          var titleMatches = System.Text.RegularExpressions.Regex.Matches(
+              json,
+              @"""title""\s*:\s*""([^""]+)""");
+
+          foreach (System.Text.RegularExpressions.Match match in titleMatches) {
+            string t = match.Groups[1].Value.Trim();
+            if (!string.IsNullOrEmpty(t) && !string.Equals(t, "member", StringComparison.OrdinalIgnoreCase)) {
+              if (!discoveredTiers.ContainsKey(t)) {
+                int cents = string.Equals(t, "Bronze", StringComparison.OrdinalIgnoreCase) ? 500 :
+                            string.Equals(t, "Silver", StringComparison.OrdinalIgnoreCase) ? 1000 :
+                            string.Equals(t, "Gold", StringComparison.OrdinalIgnoreCase) ? 2500 :
+                            string.Equals(t, "Diamond", StringComparison.OrdinalIgnoreCase) ? 5000 :
+                            string.Equals(t, "Master Architect", StringComparison.OrdinalIgnoreCase) ? 10000 : 0;
+                discoveredTiers[t] = cents;
+              }
+            }
+          }
+        }
+
+        for (int i = 0; i < memberMatches.Count; i++) {
+          string name = memberMatches[i].Groups[1].Value.Trim();
+          if (string.IsNullOrEmpty(name)) continue;
+
+          string tier = i < tierTitleMatches.Count ? tierTitleMatches[i].Groups[1].Value.Trim() : string.Empty;
+
+          if (customTierSet != null && customTierSet.Count > 0) {
+            if (string.IsNullOrEmpty(tier) || !customTierSet.Contains(tier.ToLowerInvariant())) continue;
+          } else if (!string.IsNullOrEmpty(tier)) {
+            if (string.Equals(tier, "Bronze", StringComparison.OrdinalIgnoreCase) && !includeBronze) continue;
+            if (string.Equals(tier, "Silver", StringComparison.OrdinalIgnoreCase) && !includeSilver) continue;
+            if (string.Equals(tier, "Gold", StringComparison.OrdinalIgnoreCase) && !includeGold) continue;
+            if (!string.Equals(tier, "Bronze", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(tier, "Silver", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(tier, "Gold", StringComparison.OrdinalIgnoreCase) && !includeCustomTiers) continue;
+          }
+
+          result.Add(name);
+        }
+
+        if (discoveredTiers.Count > 0) {
+          var formattedTiers = discoveredTiers
               .OrderBy(kvp => kvp.Value)
               .ThenBy(kvp => kvp.Key)
               .Select(kvp => kvp.Value > 0 ? $"{kvp.Key} (${kvp.Value / 100})" : kvp.Key)
@@ -445,7 +555,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
         }
 
       } catch (Exception ex) {
-        ModLogger.LogError($"JsonUtility failed to parse OpenAPI Patreon response: {ex.Message}");
+        ModLogger.LogError($"Regex fallback parser error: {ex.Message}");
       }
 
       return result;
@@ -505,13 +615,13 @@ namespace Mods.PatreonBeaverNames.Scripts {
 
 #pragma warning disable CS0649
     [Serializable]
-    private class PatreonApiResponse {
-      public List<PatreonMember> data;
-      public List<PatreonIncluded> included;
+    public class PatreonApiResponse {
+      public PatreonMember[] data;
+      public PatreonIncluded[] included;
     }
 
     [Serializable]
-    private class PatreonMember {
+    public class PatreonMember {
       public string id;
       public string type;
       public PatreonMemberAttributes attributes;
@@ -519,7 +629,7 @@ namespace Mods.PatreonBeaverNames.Scripts {
     }
 
     [Serializable]
-    private class PatreonMemberAttributes {
+    public class PatreonMemberAttributes {
       public string full_name;
       public string patron_status;
       public int currently_entitled_amount_cents;
@@ -527,30 +637,30 @@ namespace Mods.PatreonBeaverNames.Scripts {
     }
 
     [Serializable]
-    private class PatreonMemberRelationships {
+    public class PatreonMemberRelationships {
       public PatreonTierRelationship currently_entitled_tiers;
     }
 
     [Serializable]
-    private class PatreonTierRelationship {
-      public List<PatreonResourceIdentifier> data;
+    public class PatreonTierRelationship {
+      public PatreonResourceIdentifier[] data;
     }
 
     [Serializable]
-    private class PatreonResourceIdentifier {
+    public class PatreonResourceIdentifier {
       public string id;
       public string type;
     }
 
     [Serializable]
-    private class PatreonIncluded {
+    public class PatreonIncluded {
       public string id;
       public string type;
       public PatreonTierAttributes attributes;
     }
 
     [Serializable]
-    private class PatreonTierAttributes {
+    public class PatreonTierAttributes {
       public string title;
       public int amount_cents;
     }
